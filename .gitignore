@@ -10,6 +10,9 @@ cmake_install.cmake
 
 # Compiled output
 *.brx
+
+# Exception: Allow binary in sample project
+!sample_project/00- BricsCAD Plugin/**/*.brx
 *.obj
 *.o
 *.lib
