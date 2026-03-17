@@ -322,6 +322,9 @@ private:
     /// Timer callback: poll for Inhalt SCR completion, then publish
     void onPublishPollTimer();
     
+    /// Timer callback: poll for PDF publish completion marker
+    void onPdfDonePollTimer();
+    
     /// Launch BricsCAD PDF publish with DSD file
     void launchPublish(const QStringList& orderedDwgs);
     
@@ -409,6 +412,11 @@ private:
     QTimer* m_publishTimer = nullptr;   ///< Polls for Inhalt SCR completion
     QString m_publishMarkerPath;        ///< Path to Inhalt completion marker
     QStringList m_pendingPublishDwgs;   ///< DWGs to publish after Inhalt is ready
+    
+    // PDF publish completion polling (via /b batch instance + marker file)
+    QTimer* m_pdfDoneTimer = nullptr;   ///< Polls for publish-done marker
+    QString m_pdfDoneMarkerPath;        ///< Path to completion marker written by SCR
+    QString m_publishedPdfPath;         ///< Path to the output PDF (from DSD, for success message)
 
 };
 

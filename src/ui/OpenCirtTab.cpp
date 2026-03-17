@@ -140,6 +140,11 @@ OpenCirtTab::OpenCirtTab(QWidget* parent)
     m_publishTimer = new QTimer(this);
     m_publishTimer->setInterval(2000);
     connect(m_publishTimer, &QTimer::timeout, this, &OpenCirtTab::onPublishPollTimer);
+    
+    // PDF publish completion polling timer (marker-based, via /b batch instance)
+    m_pdfDoneTimer = new QTimer(this);
+    m_pdfDoneTimer->setInterval(2000);
+    connect(m_pdfDoneTimer, &QTimer::timeout, this, &OpenCirtTab::onPdfDonePollTimer);
 
 }
 
@@ -4128,7 +4133,18 @@ void OpenCirtTab::onPublishPollTimer() {
 }
 
 /**
- * @brief Launch BricsCAD PDF publish with DSD file.
+ * @brief Launch BricsCAD PDF publish via /b batch instance with SCR control.
+ *
+ * Creates a SCR file that:
+ *   1. Suppresses all dialogs (FILEDIA=0, CMDECHO=0, EXPERT=5)
+ *   2. Runs -PUBLISH with the generated DSD file
+ *   3. Writes a completion marker file
+ *   4. Quits BricsCAD (_.QUIT)
+ *
+ * The /b switch forces a separate BricsCAD batch instance.
+ * Proven call pattern: bricscad.exe /b "first.dwg" "script.scr"
+ * Since FILEDIA=0, BricsCAD uses the PDF path from the DSD (no filepicker).
+ * A QTimer polls for the marker file to detect completion.
  */
 void OpenCirtTab::launchPublish(const QStringList& orderedDwgs) {
     // Generate DSD file
@@ -4138,30 +4154,181 @@ void OpenCirtTab::launchPublish(const QStringList& orderedDwgs) {
         return;
     }
     
-    // Launch a separate BricsCAD instance with /pl switch (headless publish)
+    // Compute the PDF output path (same logic as generateDsdFile)
+    QString projektName = QDir(m_projectRoot).dirName();
+    QString plotDir = m_projectRoot + "/06- Plot";
+    m_publishedPdfPath = plotDir + "/" + projektName + ".pdf";
+    
+    // Paths for SCR generation
+    QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    QString scrPath = tempPath + "/OpenCirt_publish.scr";
+    QString markerPath = tempPath + "/OpenCirt_publish_done.marker";
+    
+    // Clean old marker
+    QFile::remove(markerPath);
+    
+    // Forward-slash versions for LISP/SCR
+    QString dsdSlash = dsdPath;
+    dsdSlash.replace("\\", "/");
+    QString markerSlash = markerPath;
+    markerSlash.replace("\\", "/");
+    
+    // Build SCR content
+    QString scr;
+    scr += "(progn (setvar \"FILEDIA\" 0)(princ))\n";
+    scr += "(progn (setvar \"CMDECHO\" 0)(princ))\n";
+    scr += "(progn (setvar \"EXPERT\" 5)(princ))\n";
+    scr += "(progn (setvar \"BACKGROUNDPLOT\" 0)(princ))\n";
+    scr += QString("_.-PUBLISH \"%1\"\n").arg(dsdSlash);
+    scr += "(progn (setvar \"BACKGROUNDPLOT\" 2)(princ))\n";
+    scr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
+    scr += "(progn (setvar \"CMDECHO\" 1)(princ))\n";
+    scr += "(progn (setvar \"EXPERT\" 0)(princ))\n";
+    
+    // Find newest PDF in plot folder and write its path to marker file
+    QString plotSlash = (m_projectRoot + "/06- Plot/");
+    plotSlash.replace("\\", "/");
+    scr += QString(
+        "(progn"
+        "  (setq oc-dir \"%1\")"
+        "  (setq oc-files (vl-directory-files oc-dir \"*.pdf\" 1))"
+        "  (setq oc-best nil oc-btime 0)"
+        "  (foreach oc-f oc-files"
+        "    (setq oc-ft (vl-file-systime (strcat oc-dir oc-f)))"
+        "    (if oc-ft (progn"
+        "      (setq oc-tv (+ (* (nth 0 oc-ft) 10000000000.0)"
+        "                     (* (nth 1 oc-ft) 100000000.0)"
+        "                     (* (nth 3 oc-ft) 1000000.0)"
+        "                     (* (nth 4 oc-ft) 10000.0)"
+        "                     (* (nth 5 oc-ft) 100.0)"
+        "                     (nth 6 oc-ft)))"
+        "      (if (> oc-tv oc-btime)"
+        "        (setq oc-btime oc-tv oc-best oc-f)))))"
+        "  (setq oc-mk (open \"%2\" \"w\"))"
+        "  (if oc-best"
+        "    (write-line (strcat oc-dir oc-best) oc-mk)"
+        "    (write-line \"PUBLISH_COMPLETE\" oc-mk))"
+        "  (close oc-mk)"
+        "  (princ))\n")
+        .arg(plotSlash, markerSlash);
+    scr += "_.QUIT\n";
+    
+    // Write SCR to temp file
+    QFile scrFile(scrPath);
+    if (!scrFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError(QString("SCR-Datei konnte nicht geschrieben werden: %1").arg(scrPath));
+        return;
+    }
+    QTextStream stream(&scrFile);
+    stream << scr;
+    scrFile.close();
+    
+    // Launch separate BricsCAD batch instance: /b "dwg" "scr"
     QString bricscadExe = QCoreApplication::applicationFilePath();
     QString firstDwg = orderedDwgs.first();
-    
-    QString dsdPathWin = dsdPath;
-    dsdPathWin.replace("/", "\\");
     QString dwgPathWin = firstDwg;
     dwgPathWin.replace("/", "\\");
+    QString scrPathWin = scrPath;
+    scrPathWin.replace("/", "\\");
     
     QStringList args;
-    args << "/pl" << dwgPathWin << dsdPathWin;
+    args << "/b" << dwgPathWin << scrPathWin;
     
-    QString projektName = QDir(m_projectRoot).dirName();
     QString pdfName = projektName + ".pdf";
     
-    log(QString("Starte BricsCAD-Instanz: %1").arg(bricscadExe));
-    log(QString("  /pl \"%1\" \"%2\"").arg(dwgPathWin, dsdPathWin));
+    log(QString("Starte BricsCAD Batch-Instanz: %1").arg(bricscadExe));
+    log(QString("  /b \"%1\" \"%2\"").arg(dwgPathWin, scrPathWin));
+    log(QString("  SCR: FILEDIA=0 -> -PUBLISH -> Marker -> _.QUIT"));
+    log(QString("  PDF-Ausgabe: %1").arg(m_publishedPdfPath));
     
     bool started = QProcess::startDetached(bricscadExe, args);
     if (started) {
-        logSuccess(QString("PDF-Publish gestartet in separater BricsCAD-Instanz - Ausgabe: %1").arg(pdfName));
+        logSuccess(QString("PDF-Publish gestartet in Batch-Instanz - Ausgabe: %1").arg(pdfName));
+        
+        // Start polling for completion marker
+        m_pdfDoneMarkerPath = markerPath;
+        m_btnPublish->setEnabled(false);
+        m_btnPublish->setText("PDF wird erzeugt...");
+        m_pdfDoneTimer->start();
     } else {
-        logError("BricsCAD-Instanz konnte nicht gestartet werden");
+        logError("BricsCAD Batch-Instanz konnte nicht gestartet werden");
     }
+}
+
+/**
+ * @brief Poll for PDF publish completion via marker file.
+ *
+ * The SCR in the /b batch instance writes a marker file after -PUBLISH
+ * completes and before _.QUIT. Once the marker exists, publish is done.
+ * Show success notification with PDF file info.
+ */
+void OpenCirtTab::onPdfDonePollTimer() {
+    if (m_pdfDoneMarkerPath.isEmpty()) {
+        m_pdfDoneTimer->stop();
+        return;
+    }
+    
+    if (!QFile::exists(m_pdfDoneMarkerPath)) {
+        return;  // Still running
+    }
+    
+    // === Marker found! Read PDF path from marker content ===
+    QString pdfPath;
+    {
+        QFile markerFile(m_pdfDoneMarkerPath);
+        if (markerFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            pdfPath = QTextStream(&markerFile).readLine().trimmed();
+            markerFile.close();
+        }
+    }
+    
+    // Check if the PDF exists and has content (may still be flushing)
+    if (!pdfPath.isEmpty() && pdfPath != "PUBLISH_COMPLETE") {
+        QFileInfo pdfInfo(pdfPath);
+        if (!pdfInfo.exists() || pdfInfo.size() == 0) {
+            return;  // Keep polling - PDF still being written to disk
+        }
+    }
+    
+    // === Publish complete! ===
+    m_pdfDoneTimer->stop();
+    QFile::remove(m_pdfDoneMarkerPath);
+    m_pdfDoneMarkerPath.clear();
+    
+    // Restore button
+    m_btnPublish->setText("PDF publizieren");
+    m_btnPublish->setEnabled(true);
+    
+    // Show result
+    if (!pdfPath.isEmpty() && pdfPath != "PUBLISH_COMPLETE") {
+        QFileInfo pdfInfo(pdfPath);
+        QString sizeStr;
+        qint64 bytes = pdfInfo.size();
+        if (bytes >= 1024 * 1024) {
+            sizeStr = QString("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
+        } else {
+            sizeStr = QString("%1 KB").arg(bytes / 1024.0, 0, 'f', 0);
+        }
+        
+        logSuccess(QString("PDF-Publish abgeschlossen: %1 (%2)")
+                   .arg(pdfInfo.fileName(), sizeStr));
+        
+        QMessageBox::information(this, "PDF-Publish abgeschlossen",
+            QString("PDF erfolgreich erzeugt:\n\n"
+                    "%1\n"
+                    "Groesse: %2\n"
+                    "Speicherort: %3")
+            .arg(pdfInfo.fileName())
+            .arg(sizeStr)
+            .arg(pdfInfo.absolutePath()));
+    } else {
+        logSuccess("PDF-Publish abgeschlossen.");
+        QMessageBox::information(this, "PDF-Publish abgeschlossen",
+            "Der Publish-Vorgang wurde erfolgreich beendet.\n\n"
+            "Die PDF-Datei wurde am gewaehlten Speicherort abgelegt.");
+    }
+    
+    m_publishedPdfPath.clear();
 }
 
 } // namespace BatchProcessing
