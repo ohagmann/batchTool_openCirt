@@ -71,6 +71,7 @@ struct DataPoint {
     QString refDp;                  ///< OC_REF_DP_n (reference name for ODS lookup)
     QString integDp;                ///< OC_INTEG_DP_n (integration type)
     QString fcodeDp;                ///< OC_FCODE_DP_n
+    QString produkt;                ///< OC_PRODUKT (Block-Ebene, fuer Sensorliste)
     int dpIndex = 0;                ///< Datenpunkt-Index (1..25)
     QMap<QString, QString> funktionsWerte; ///< OC_x_x_x_DP_n values (60 columns)
 };
@@ -165,6 +166,8 @@ private slots:
     
     void onEnableToggled(bool enabled);
     void onPublishPdf();
+    void onSensorListeGenerate();
+    void onIoBelegungGenerate();
     
     /// Timer callback: poll for Phase 1 completion marker
     void onPhase1PollTimer();
@@ -382,6 +385,8 @@ private:
     QPushButton* m_btnTextwidth;
     QPushButton* m_btnFullProject;
     QPushButton* m_btnPublish;
+    QPushButton* m_btnSensorliste;
+    QPushButton* m_btnIoBelegung;
     QPushButton* m_btnBereinigen;
     
     QCheckBox* m_chkIncludeBmk;

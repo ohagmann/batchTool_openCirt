@@ -1,18 +1,35 @@
+# =============================================================================
+# Batchtool / OpenCirt – .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
 # Build artifacts
+# -----------------------------------------------------------------------------
 build_windows/
 build/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+CMakeUserPresets.json
+Testing/
+compile_commands.json
+.cache/
+
+# Visual Studio / MSBuild
 *.vcxproj
 *.vcxproj.filters
+*.vcxproj.user
 *.sln
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+.vs/
 
+# -----------------------------------------------------------------------------
 # Compiled output
+# -----------------------------------------------------------------------------
 *.brx
-
-# Exception: Allow binary in sample project
-!sample_project/00- BricsCAD Plugin/**/*.brx
 *.obj
 *.o
 *.lib
@@ -20,36 +37,47 @@ cmake_install.cmake
 *.exe
 *.pdb
 *.ilk
+*.iobj
+*.ipdb
 *.exp
 
+# Exception: Pre-built plugin in sample project
+!sample_project/**/*.brx
+
+# -----------------------------------------------------------------------------
 # Qt generated
+# -----------------------------------------------------------------------------
 *_autogen/
 moc_*.cpp
 ui_*.h
 qrc_*.cpp
 
-# IDE
-.vs/
-.vscode/
-*.user
-*.suo
-*.ncb
-*.sdf
-*.opensdf
+# -----------------------------------------------------------------------------
+# Proprietary SDK (must be obtained separately from Bricsys)
+# -----------------------------------------------------------------------------
+external/brx_sdk/
 
+# -----------------------------------------------------------------------------
+# OS generated
+# -----------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+._*
+
+# -----------------------------------------------------------------------------
+# Editor / IDE
+# -----------------------------------------------------------------------------
+.vscode/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
 # Backups
+# -----------------------------------------------------------------------------
 *.bak
 *.backup
 *.old
 *.orig
-*~
-
-# OS
-Thumbs.db
-.DS_Store
-
-# Proprietary SDK (must be obtained separately)
-external/brx_sdk/
-
-# Temporary
-_DELETE_ME/

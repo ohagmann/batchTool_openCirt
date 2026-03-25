@@ -22,6 +22,8 @@
 #include "dbents.h"    // AcDbBlockReference, AcDbAttribute for reading block attributes
 
 #include "OpenCirtTab.h"
+#include "../utils/SensorKeywordLoader.h"
+#include "../utils/OdsTemplateWriter.h"
 
 // Qt Headers
 #include <QVBoxLayout>
@@ -210,6 +212,14 @@ void OpenCirtTab::setupUi() {
         "PDF publizieren",
         "Alle Zeichnungen als Multi-Sheet PDF mit Inhaltsverzeichnis");
     
+    m_btnSensorliste = createButtonRow(
+        "Sensorliste erstellen",
+        "Fuehler/Sensoren aus GA-FL-Daten in ODS-Vorlage exportieren");
+    
+    m_btnIoBelegung = createButtonRow(
+        "IO-Belegung erstellen",
+        "Hardware Ein-/Ausgaenge auf Module verteilen (SPS/DDC-Belegungsplan)");
+    
     // Separator before full project
     buttonLayout->addSpacing(8);
     auto* separator = new QLabel("");
@@ -281,6 +291,8 @@ void OpenCirtTab::setupUi() {
     connect(m_btnTextwidth, &QPushButton::clicked, this, &OpenCirtTab::onTextwidthAdjust);
     connect(m_btnFullProject, &QPushButton::clicked, this, &OpenCirtTab::onFullProjectGenerate);
     connect(m_btnPublish, &QPushButton::clicked, this, &OpenCirtTab::onPublishPdf);
+    connect(m_btnSensorliste, &QPushButton::clicked, this, &OpenCirtTab::onSensorListeGenerate);
+    connect(m_btnIoBelegung, &QPushButton::clicked, this, &OpenCirtTab::onIoBelegungGenerate);
     connect(m_btnBereinigen, &QPushButton::clicked, this, &OpenCirtTab::onProjektBereinigen);
 }
 
@@ -292,6 +304,8 @@ void OpenCirtTab::onEnableToggled(bool enabled) {
     m_btnGaFl->setEnabled(enabled);
     m_btnTextwidth->setEnabled(enabled);
     m_btnPublish->setEnabled(enabled);
+    m_btnSensorliste->setEnabled(enabled);
+    m_btnIoBelegung->setEnabled(enabled);
     m_btnFullProject->setEnabled(enabled);
     m_btnBereinigen->setEnabled(enabled);
     m_chkIncludeBmk->setEnabled(enabled);
@@ -482,6 +496,8 @@ void OpenCirtTab::updateButtonStates() {
     m_btnGaFl->setEnabled(enabled);
     m_btnTextwidth->setEnabled(enabled);
     m_btnPublish->setEnabled(enabled);
+    m_btnSensorliste->setEnabled(enabled);
+    m_btnIoBelegung->setEnabled(enabled);
     m_btnFullProject->setEnabled(enabled);
     m_btnBereinigen->setEnabled(enabled);
 }
@@ -1278,6 +1294,514 @@ void OpenCirtTab::onFullProjectGenerate() {
         logError("Keine Operationen zum Ausfuehren");
         m_fullProjectMode = false;
     }
+}
+
+// ============================================================================
+// Sensorliste Generation (One-Shot, eigenstaendiger Button)
+// ============================================================================
+
+void OpenCirtTab::onSensorListeGenerate() {
+    QStringList errors;
+    if (!validateProjectStructure(errors)) {
+        QMessageBox::warning(this, "Projektstruktur",
+            "Projektstruktur unvollstaendig:\n\n" + errors.join("\n"));
+        return;
+    }
+
+    log("=== SENSORLISTE ERSTELLEN ===");
+
+    // --- 1. sensor.csv laden ---
+    QString sensorCsvPath = projectPath(OpenCirtConfig::REFERENZEN_DIR) + "/sensor.csv";
+    if (!QFileInfo::exists(sensorCsvPath)) {
+        logError("sensor.csv nicht gefunden in REFERENZEN!");
+        QMessageBox::warning(this, "Sensorliste",
+            QString("Datei nicht gefunden:\n%1\n\n"
+                    "Bitte sensor.csv im Ordner REFERENZEN anlegen.\n"
+                    "Zeile 1 = Header, ab Zeile 2 = Keywords (Spalte 1).")
+            .arg(sensorCsvPath));
+        return;
+    }
+
+    SensorKeywordLoader keywords;
+    if (!keywords.load(sensorCsvPath)) {
+        logError("Keine Keywords in sensor.csv gefunden!");
+        return;
+    }
+    log(QString("%1 Sensor-Keywords geladen").arg(keywords.keywordCount()));
+
+    // --- 2. Extrahierte Daten lesen ---
+    // Voraussetzung: Phase 1 (Extraktion) muss vorher gelaufen sein
+    QStringList dwgFiles = findProjectDwgs();
+    if (dwgFiles.isEmpty()) {
+        logError("Keine DWG-Dateien im Projekt gefunden!");
+        return;
+    }
+
+    QVector<SourceDrawingInfo> drawings = readExtractedData(dwgFiles);
+    if (drawings.isEmpty()) {
+        logError("Keine extrahierten Daten gefunden!\n"
+                 "Bitte zuerst GA-FL Phase 1 (Extraktion) ausfuehren.");
+        QMessageBox::warning(this, "Sensorliste",
+            "Keine extrahierten Daten gefunden.\n\n"
+            "Bitte zuerst GA-FL erstellen (mindestens Phase 1),\n"
+            "damit die Datenpunkte extrahiert werden.");
+        return;
+    }
+
+    // --- 3. Datenpunkte filtern ---
+    struct SensorEntry {
+        QString asp;
+        QString anlage;
+        QString bezeichnung;
+        QString bmk;
+        QString bas;
+        QString fuehlertyp;
+    };
+
+    QList<SensorEntry> sensors;
+    QSet<QString> seenBmk;  // Deduplizierung: pro ASP+BMK nur einmal
+    int totalDp = 0;
+
+    for (const SourceDrawingInfo& d : drawings) {
+        QString asp = d.plankopfAttributes.value("ASP", d.aspName);
+        QString anlage = d.anlage;
+
+        for (const DataPoint& dp : d.dataPoints) {
+            totalDp++;
+            if (keywords.isSensor(dp.produkt)) {
+                // Deduplizierung: Ein Fuehler hat oft MW_xx und TL_xx,
+                // ist aber das gleiche physische Geraet -> nur einmal listen
+                // Key muss Anlage enthalten: TVL-01 in WPL-1010 != TVL-01 in HZK-1010
+                QString dedupKey = asp + "|" + anlage + "|" + dp.aks;
+                if (seenBmk.contains(dedupKey)) continue;
+                seenBmk.insert(dedupKey);
+
+                SensorEntry e;
+                e.asp = asp;
+                e.anlage = anlage;
+                e.bezeichnung = dp.bezeichnung;
+                e.bmk = dp.aks;
+
+                // BAS: Funktionscode am Ende entfernen
+                // BAS_DP z.B. "KOE46-ASP01-HZG-WPL-1010-U20.00.601-TVL-01-MW_01"
+                // BMK z.B. "TVL-01" -> BAS bis einschl. BMK: "KOE46-...-TVL-01"
+                e.bas = dp.basString;
+                int bmkPos = e.bas.lastIndexOf(dp.aks);
+                if (bmkPos >= 0) {
+                    e.bas = e.bas.left(bmkPos + dp.aks.length());
+                }
+
+                e.fuehlertyp = dp.produkt;
+                sensors.append(e);
+            }
+        }
+    }
+
+    log(QString("%1 von %2 Datenpunkten als Sensor erkannt")
+        .arg(sensors.size()).arg(totalDp));
+
+    if (sensors.isEmpty()) {
+        logError("Keine Sensoren gefunden! Keywords in sensor.csv pruefen.");
+        QMessageBox::information(this, "Sensorliste",
+            QString("Keine Datenpunkte matched die Keywords aus sensor.csv.\n\n"
+                    "Geprueft: %1 Datenpunkte mit %2 Keywords.")
+            .arg(totalDp).arg(keywords.keywordCount()));
+        return;
+    }
+
+    // --- 4. ODS-Vorlage befuellen ---
+    QString templatePath = projectPath(OpenCirtConfig::VORLAGEN_DIR)
+                           + "/OC_VORLAGE_SENSORLISTE_V_1.ods";
+    if (!QFileInfo::exists(templatePath)) {
+        logError("ODS-Vorlage nicht gefunden: " + templatePath);
+        return;
+    }
+
+    // Ausgabe in Plot-Ordner (zentraler Ausgabeort)
+    QString plotDir = m_projectRoot + "/06- Plot";
+    QDir().mkpath(plotDir);
+    QString outputPath = plotDir + "/Sensorliste.ods";
+
+    OdsTemplateWriter writer;
+    if (!writer.openTemplate(templatePath, outputPath)) {
+        logError("ODS-Template-Fehler: " + writer.lastError());
+        return;
+    }
+
+    // Datenzeilen einfuegen (8 Spalten: Pos, ASP, Anlage, Bezeichnung, BMK, BAS, Typ, Bemerkung)
+    int pos = 1;
+    for (const SensorEntry& s : sensors) {
+        writer.addRow({
+            QString("%1").arg(pos, 3, 10, QChar('0')),
+            s.asp,
+            s.anlage,
+            s.bezeichnung,
+            s.bmk,
+            s.bas,
+            s.fuehlertyp,
+            QString()  // Bemerkung leer
+        });
+        pos++;
+    }
+
+    if (!writer.save()) {
+        logError("ODS-Speichern fehlgeschlagen: " + writer.lastError());
+        return;
+    }
+
+    logSuccess(QString("Sensorliste erstellt: %1 Eintraege -> %2")
+               .arg(sensors.size()).arg(outputPath));
+
+    QMessageBox::information(this, "Sensorliste",
+        QString("Sensorliste erfolgreich erstellt!\n\n"
+                "%1 Sensoren aus %2 Datenpunkten\n\n"
+                "Ausgabe: %3")
+        .arg(sensors.size()).arg(totalDp).arg(outputPath));
+}
+
+// ============================================================================
+// IO-Belegungsliste Generation (One-Shot, eigenstaendiger Button)
+// ============================================================================
+
+void OpenCirtTab::onIoBelegungGenerate() {
+    QStringList errors;
+    if (!validateProjectStructure(errors)) {
+        QMessageBox::warning(this, "Projektstruktur",
+            "Projektstruktur unvollstaendig:\n\n" + errors.join("\n"));
+        return;
+    }
+
+    log("=== IO-BELEGUNGSLISTE ERSTELLEN ===");
+
+    // --- 1. iomodule.csv laden ---
+    QString ioModuleCsvPath = projectPath(OpenCirtConfig::REFERENZEN_DIR) + "/iomodule.csv";
+    if (!QFileInfo::exists(ioModuleCsvPath)) {
+        logError("iomodule.csv nicht gefunden in REFERENZEN!");
+        QMessageBox::warning(this, "IO-Belegung",
+            QString("Datei nicht gefunden:\n%1\n\n"
+                    "Bitte iomodule.csv im Ordner REFERENZEN anlegen.")
+            .arg(ioModuleCsvPath));
+        return;
+    }
+
+    // IO-Typ Definitionen: Name, Kurzname, refRow-Index, Kanalanzahl
+    struct IoModuleDef {
+        QString label;      // Aus CSV, z.B. "Analoge Eingaenge"
+        QString shortName;  // AI, DI, AO, DO
+        int refRowIdx;      // Index in ODS-Referenz refRow[]
+        int channels;       // Kanaele pro Modul
+    };
+
+    // Feste Zuordnung: Keyword -> refRow-Index + Kurzname
+    struct IoTypeMapping {
+        QString keyword;
+        QString shortName;
+        int refRowIdx;
+    };
+    QList<IoTypeMapping> mappings = {
+        {"Analoge Eing",  "AI", 3},  // refRow[3] = OC_1_1_1
+        {"Digitale Eing", "DI", 4},  // refRow[4] = OC_1_1_2
+        {"Analoge Ausg",  "AO", 5},  // refRow[5] = OC_1_1_3
+        {"Digitale Ausg", "DO", 6},  // refRow[6] = OC_1_1_4
+    };
+
+    QList<IoModuleDef> moduleDefs;
+    {
+        QFile f(ioModuleCsvPath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            logError("iomodule.csv nicht lesbar");
+            return;
+        }
+        QTextStream in(&f);
+        in.setEncoding(QStringConverter::Utf8);
+        bool firstLine = true;
+        while (!in.atEnd()) {
+            QString line = in.readLine().trimmed();
+            if (firstLine) { firstLine = false; continue; }
+            if (line.isEmpty()) continue;
+
+            QStringList parts = line.split(';');
+            if (parts.size() < 2) continue;
+
+            QString label = parts[0].trimmed();
+            int channels = parts[1].trimmed().toInt();
+            if (channels <= 0) continue;
+
+            // Mapping finden
+            for (const IoTypeMapping& m : mappings) {
+                if (label.contains(m.keyword, Qt::CaseInsensitive)) {
+                    IoModuleDef def;
+                    def.label = label;
+                    def.shortName = m.shortName;
+                    def.refRowIdx = m.refRowIdx;
+                    def.channels = channels;
+                    moduleDefs.append(def);
+                    break;
+                }
+            }
+        }
+        f.close();
+    }
+
+    if (moduleDefs.isEmpty()) {
+        logError("Keine gueltigen Modultypen in iomodule.csv!");
+        return;
+    }
+    for (const IoModuleDef& md : moduleDefs) {
+        log(QString("  Modultyp: %1 (%2) = %3 Kanaele/Modul")
+            .arg(md.label, md.shortName).arg(md.channels));
+    }
+
+    // --- 2. Extrahierte Daten + ODS-Referenz laden ---
+    QStringList dwgFiles = findProjectDwgs();
+    if (dwgFiles.isEmpty()) {
+        logError("Keine DWG-Dateien im Projekt gefunden!");
+        return;
+    }
+
+    QVector<SourceDrawingInfo> drawings = readExtractedData(dwgFiles);
+    if (drawings.isEmpty()) {
+        logError("Keine extrahierten Daten gefunden!\n"
+                 "Bitte zuerst GA-FL erstellen (mindestens Phase 1).");
+        QMessageBox::warning(this, "IO-Belegung",
+            "Keine extrahierten Daten gefunden.\n\n"
+            "Bitte zuerst GA-FL erstellen (mindestens Phase 1).");
+        return;
+    }
+
+    QMap<QString, QVector<QString>> refData = readOdsReference();
+    if (refData.isEmpty()) {
+        logError("ODS-Referenz (GA_FL_VORLAGE.csv) nicht geladen!");
+        return;
+    }
+
+    // --- 3. Datenpunkte auf IO-Typen verteilen ---
+    struct IoEntry {
+        QString asp;
+        QString anlage;
+        QString bezeichnung;
+        QString bmk;
+        QString bas;
+        int ioTypeIndex;  // Index in moduleDefs
+    };
+
+    // Pro ASP: Liste von IoEntries, gruppiert nach IO-Typ
+    QMap<QString, QList<IoEntry>> aspIoEntries;
+    int totalIo = 0;
+    int totalDp = 0;
+
+    for (const SourceDrawingInfo& d : drawings) {
+        QString asp = d.plankopfAttributes.value("ASP", d.aspName);
+        QString anlage = d.anlage;
+
+        for (const DataPoint& dp : d.dataPoints) {
+            totalDp++;
+
+            // RefDP in ODS-Referenz nachschlagen
+            if (dp.refDp.isEmpty() || !refData.contains(dp.refDp))
+                continue;
+
+            const QVector<QString>& refRow = refData[dp.refDp];
+
+            // Pruefen welche IO-Typen dieser DP belegt
+            for (int mi = 0; mi < moduleDefs.size(); ++mi) {
+                const IoModuleDef& md = moduleDefs[mi];
+                if (md.refRowIdx < refRow.size()) {
+                    QString cellVal = refRow[md.refRowIdx].trimmed();
+                    if (!cellVal.isEmpty()) {
+                        bool ok;
+                        int numVal = cellVal.toInt(&ok);
+                        if (ok && numVal > 0) {
+                            IoEntry e;
+                            e.asp = asp;
+                            e.anlage = anlage;
+                            e.bezeichnung = dp.bezeichnung;
+                            e.bmk = dp.aks;
+                            e.bas = dp.basString;  // BAS komplett
+                            e.ioTypeIndex = mi;
+                            aspIoEntries[asp].append(e);
+                            totalIo++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log(QString("%1 Hardware-IOs aus %2 Datenpunkten erkannt")
+        .arg(totalIo).arg(totalDp));
+
+    if (totalIo == 0) {
+        logError("Keine Hardware-IOs gefunden!");
+        QMessageBox::information(this, "IO-Belegung",
+            "Keine Datenpunkte mit Hardware Ein-/Ausgaengen gefunden.");
+        return;
+    }
+
+    // --- 4. Module zuweisen und ODS schreiben ---
+    QString templatePath = projectPath(OpenCirtConfig::VORLAGEN_DIR)
+                           + "/OC_VORLAGE_IO_BELEGUNG_V_1.ods";
+    if (!QFileInfo::exists(templatePath)) {
+        logError("ODS-Vorlage nicht gefunden: " + templatePath);
+        return;
+    }
+
+    QString plotDir = m_projectRoot + "/06- Plot";
+    QDir().mkpath(plotDir);
+    QString outputPath = plotDir + "/IO-Belegungsliste.ods";
+
+    OdsTemplateWriter writer;
+    if (!writer.openTemplate(templatePath, outputPath)) {
+        logError("ODS-Template-Fehler: " + writer.lastError());
+        return;
+    }
+
+    // Hinweiszeilen entfernen (Zeile 2 = Modultypen-Info, Zeile 3 = Hinweis)
+    // Zeile 3 zuerst entfernen (hoeherer Index), dann Zeile 2
+    writer.removeRow(3);
+    writer.removeRow(2);
+
+    int pos = 1;
+
+    // Pro ASP: nach IO-Typ gruppiert, Module zuweisen
+    for (auto aspIt = aspIoEntries.constBegin(); aspIt != aspIoEntries.constEnd(); ++aspIt) {
+        const QList<IoEntry>& entries = aspIt.value();
+
+        // Sortieren: nach IO-Typ, dann Anlage, dann BMK
+        QList<IoEntry> sorted = entries;
+        std::sort(sorted.begin(), sorted.end(), [](const IoEntry& a, const IoEntry& b) {
+            if (a.ioTypeIndex != b.ioTypeIndex) return a.ioTypeIndex < b.ioTypeIndex;
+            if (a.anlage != b.anlage) return a.anlage < b.anlage;
+            return a.bmk < b.bmk;
+        });
+
+        // Kanalzaehler pro IO-Typ: modulNr und kanalNr
+        QMap<int, int> moduleNr;  // ioTypeIndex -> aktuelles Modul (1-basiert)
+        QMap<int, int> channelNr; // ioTypeIndex -> aktueller Kanal (1-basiert)
+
+        for (int si = 0; si < sorted.size(); ++si) {
+            const IoEntry& e = sorted[si];
+            const IoModuleDef& md = moduleDefs[e.ioTypeIndex];
+
+            // Modul/Kanal initialisieren falls noetig
+            if (!moduleNr.contains(e.ioTypeIndex)) {
+                moduleNr[e.ioTypeIndex] = 1;
+                channelNr[e.ioTypeIndex] = 1;
+            }
+
+            int mod = moduleNr[e.ioTypeIndex];
+            int ch = channelNr[e.ioTypeIndex];
+
+            QString modulTyp = QString("%1 Modul %2 / Kanal %3")
+                               .arg(md.shortName).arg(mod).arg(ch);
+
+            writer.addRow({
+                QString("%1").arg(pos, 3, 10, QChar('0')),
+                e.asp,
+                e.anlage,
+                e.bezeichnung,
+                e.bmk,
+                e.bas,
+                modulTyp
+            });
+            pos++;
+
+            // Naechster Kanal, ggf. naechstes Modul
+            ch++;
+            if (ch > md.channels) {
+                ch = 1;
+                mod++;
+            }
+            moduleNr[e.ioTypeIndex] = mod;
+            channelNr[e.ioTypeIndex] = ch;
+
+            // Reserve-Kanaele auffuellen wenn IO-Typ wechselt oder letzter Eintrag
+            bool isLastOfType = (si == sorted.size() - 1)
+                || (sorted[si + 1].ioTypeIndex != e.ioTypeIndex);
+
+            if (isLastOfType && ch > 1) {
+                // Modul ist angefangen aber nicht voll -> Reserve bis Ende
+                int currentMod = moduleNr[e.ioTypeIndex];
+                int currentCh = channelNr[e.ioTypeIndex];
+                while (currentCh <= md.channels) {
+                    QString resModulTyp = QString("%1 Modul %2 / Kanal %3")
+                                         .arg(md.shortName).arg(currentMod).arg(currentCh);
+                    writer.addRow({
+                        QString("%1").arg(pos, 3, 10, QChar('0')),
+                        QString(),   // ASP leer
+                        QString(),   // Anlage leer
+                        "Reserve",   // Klartext
+                        QString(),   // BMK leer
+                        QString(),   // BAS leer
+                        resModulTyp
+                    });
+                    pos++;
+                    currentCh++;
+                }
+                // Modul ist jetzt voll, naechstes Modul bereit
+                moduleNr[e.ioTypeIndex] = currentMod + 1;
+                channelNr[e.ioTypeIndex] = 1;
+            }
+        }
+
+        // Reserve-Kanaele auffuellen: nicht volle Module mit "Reserve" auffuellen
+        for (int mi = 0; mi < moduleDefs.size(); ++mi) {
+            if (!channelNr.contains(mi)) continue;  // IO-Typ nicht verwendet
+
+            int ch = channelNr[mi];
+            if (ch == 1) continue;  // Modul ist voll oder kein angefangenes Modul
+
+            const IoModuleDef& md = moduleDefs[mi];
+            int mod = moduleNr[mi];
+
+            // Restliche Kanaele des angefangenen Moduls als Reserve
+            while (ch <= md.channels) {
+                QString modulTyp = QString("%1 Modul %2 / Kanal %3")
+                                   .arg(md.shortName).arg(mod).arg(ch);
+                writer.addRow({
+                    QString("%1").arg(pos, 3, 10, QChar('0')),
+                    aspIt.key(),  // ASP
+                    QString(),    // Anlage leer
+                    "Reserve",    // Klartext
+                    QString(),    // BMK leer
+                    QString(),    // BAS leer
+                    modulTyp
+                });
+                pos++;
+                ch++;
+            }
+        }
+    }
+
+    if (!writer.save()) {
+        logError("ODS-Speichern fehlgeschlagen: " + writer.lastError());
+        return;
+    }
+
+    // Zusammenfassung
+    QString summary;
+    for (auto aspIt = aspIoEntries.constBegin(); aspIt != aspIoEntries.constEnd(); ++aspIt) {
+        summary += QString("\n  %1:").arg(aspIt.key());
+        QMap<int, int> typeCounts;
+        for (const IoEntry& e : aspIt.value()) {
+            typeCounts[e.ioTypeIndex]++;
+        }
+        for (auto tc = typeCounts.constBegin(); tc != typeCounts.constEnd(); ++tc) {
+            const IoModuleDef& md = moduleDefs[tc.key()];
+            int modules = (tc.value() + md.channels - 1) / md.channels;
+            summary += QString(" %1x%2 (%3 Module)").arg(tc.value()).arg(md.shortName).arg(modules);
+        }
+    }
+
+    logSuccess(QString("IO-Belegungsliste erstellt: %1 IOs -> %2%3")
+               .arg(totalIo).arg(outputPath).arg(summary));
+
+    QMessageBox::information(this, "IO-Belegung",
+        QString("IO-Belegungsliste erfolgreich erstellt!\n\n"
+                "%1 Hardware-IOs aus %2 Datenpunkten\n"
+                "%3\n\n"
+                "Ausgabe: %4")
+        .arg(totalIo).arg(totalDp).arg(summary).arg(outputPath));
 }
 
 // ============================================================================
@@ -2322,9 +2846,10 @@ SourceDrawingInfo OpenCirtTab::parseExtractedCsv(const QString& csvPath, const Q
         if (fields.size() > 4) dp.fcodeDp = fields[4];
         if (fields.size() > 5) dp.basString = fields[5];
         if (fields.size() > 6) dp.integDp = fields[6];
+        if (fields.size() > 7) dp.produkt = fields[7];
         
-        // Columns 7+ are the 60 function values (OC_x_x_x)
-        for (int col = 7; col < fields.size() && col < header.size(); ++col) {
+        // Columns 8+ are the 60 function values (OC_x_x_x)
+        for (int col = 8; col < fields.size() && col < header.size(); ++col) {
             QString colName = header[col];
             QString val = fields[col];
             if (!val.trimmed().isEmpty()) {

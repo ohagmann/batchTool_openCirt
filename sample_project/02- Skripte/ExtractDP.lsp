@@ -173,7 +173,7 @@
 
 (defun ExtractDP (/ extract-dir dwg-name csv-path file
                     ss i ent insert-data
-                    bez aks dp-index
+                    bez aks produkt dp-index
                     active-attr active-val ref-attr ref-val
                     fcode-attr fcode-val bas-attr bas-val
                     integ-attr integ-val komm-attr komm-val
@@ -206,6 +206,9 @@
 
   (setq func-cols (oc-dp-get-function-columns))
 
+  ;; OC_PRODUKT auf Block-Ebene lesen (wird fuer Sensorliste benoetigt)
+  ;; Nur einmal pro Block, nicht pro DP
+
   (setq plankopf-data (oc-dp-extract-plankopf))
 
   (setq file (open csv-path "w"))
@@ -217,8 +220,8 @@
     )
   )
 
-  ;; Header schreiben (KOMMENTAR als letzte Spalte)
-  (setq csv-line "AKS;BEZEICHNUNG;AKS2;REF_DP;FCODE_DP;BAS_DP;INTEG_DP")
+  ;; Header schreiben (PRODUKT nach INTEG_DP, KOMMENTAR als letzte Spalte)
+  (setq csv-line "AKS;BEZEICHNUNG;AKS2;REF_DP;FCODE_DP;BAS_DP;INTEG_DP;PRODUKT")
   (foreach col func-cols
     (setq csv-line (strcat csv-line ";" col))
   )
@@ -371,6 +374,7 @@
     (setq ent (caddr blk))
     (setq aks (oc-dp-read-attr ent "OC_AKS"))
     (setq bez (oc-dp-read-attr ent "OC_BEZEICHNUNG"))
+    (setq produkt (oc-dp-read-attr ent "OC_PRODUKT"))
 
     (setq dp-index 1)
     (while (<= dp-index 25)
@@ -395,7 +399,7 @@
           (setq komm-attr (strcat "OC_KOMMENTAR_DP_" (itoa dp-index)))
           (setq komm-val (oc-dp-read-attr ent komm-attr))
 
-          ;; CSV-Zeile aufbauen
+          ;; CSV-Zeile aufbauen (PRODUKT nach INTEG_DP)
           (setq csv-line (strcat
             (oc-dp-escape-csv aks) ";"
             (oc-dp-escape-csv bez) ";"
@@ -403,7 +407,8 @@
             (oc-dp-escape-csv ref-val) ";"
             (oc-dp-escape-csv fcode-val) ";"
             (oc-dp-escape-csv bas-val) ";"
-            (oc-dp-escape-csv integ-val)
+            (oc-dp-escape-csv integ-val) ";"
+            (oc-dp-escape-csv produkt)
           ))
 
           ;; Funktionsspalten
@@ -442,5 +447,5 @@
   (ExtractDP)
 )
 
-(oc-log "\nExtractDP.lsp geladen (v1.5)")
+(oc-log "\nExtractDP.lsp geladen (v1.6 + OC_PRODUKT)")
 (princ)

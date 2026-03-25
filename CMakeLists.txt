@@ -72,6 +72,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
 )
 
 # ============================================================================
@@ -86,6 +87,8 @@ set(PLUGIN_SOURCES
     src/ui/MainWindow.cpp
     src/ui/OpenCirtTab.cpp
     src/ui/widgets/AcadColorGrid.cpp
+    src/utils/SensorKeywordLoader.cpp
+    src/utils/OdsTemplateWriter.cpp
 )
 
 set(PLUGIN_HEADERS
@@ -95,7 +98,69 @@ set(PLUGIN_HEADERS
     src/ui/MainWindow.h
     src/ui/OpenCirtTab.h
     src/ui/widgets/AcadColorGrid.h
+    src/utils/SensorKeywordLoader.h
+    src/utils/OdsTemplateWriter.h
 )
+
+# ============================================================================
+# External Libraries: QuaZip + pugixml (fuer ODS-Generierung)
+# ============================================================================
+
+# pugixml - Header-only XML Parser
+# Erwarteter Pfad: external/pugixml/
+# Installation: git clone https://github.com/zeux/pugixml external/pugixml
+set(PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml")
+if(EXISTS "${PUGIXML_DIR}/src/pugixml.hpp")
+    message(STATUS "pugixml: ${PUGIXML_DIR}")
+    include_directories(${PUGIXML_DIR}/src)
+    # pugixml ist Header-only mit einer .cpp Datei
+    list(APPEND PLUGIN_SOURCES ${PUGIXML_DIR}/src/pugixml.cpp)
+else()
+    message(WARNING "pugixml nicht gefunden! Sensorliste/IO-Belegung deaktiviert.")
+    message(WARNING "Installation: git clone https://github.com/zeux/pugixml external/pugixml")
+endif()
+
+# QuaZip - Qt-Wrapper fuer ZIP (ODS = ZIP + XML)
+# Erwarteter Pfad: external/quazip/ (CMake-basiert)
+# Installation: git clone https://github.com/stachenov/quazip external/quazip
+set(QUAZIP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/quazip")
+if(EXISTS "${QUAZIP_DIR}/CMakeLists.txt")
+    message(STATUS "QuaZip: ${QUAZIP_DIR}")
+
+    # zlib via FetchContent bereitstellen (Qt6 exportiert kein ZLIB-Target)
+    include(FetchContent)
+    FetchContent_Declare(zlib
+        GIT_REPOSITORY https://github.com/madler/zlib.git
+        GIT_TAG        v1.3.1
+    )
+    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(zlib)
+
+    # find_package(ZLIB) die gerade gebaute zlib zeigen
+    set(ZLIB_INCLUDE_DIR "${zlib_SOURCE_DIR};${zlib_BINARY_DIR}" CACHE PATH "" FORCE)
+    set(ZLIB_LIBRARY zlibstatic CACHE STRING "" FORCE)
+    set(ZLIB_FOUND TRUE CACHE BOOL "" FORCE)
+    # ZLIB::ZLIB Imported Target erstellen (QuaZip erwartet das)
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB ALIAS zlibstatic)
+    endif()
+
+    set(QUAZIP_QT_MAJOR_VERSION 6 CACHE STRING "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_USE_QT_ZLIB OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_FETCH_LIBS OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_FORCE_FETCH_LIBS OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_ENABLE_QTEXTCODEC OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_BZIP2 OFF CACHE BOOL "" FORCE)
+    set(QUAZIP_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${QUAZIP_DIR} ${CMAKE_BINARY_DIR}/quazip)
+    # QuaZip erstellt Target "QuaZip::QuaZip"
+else()
+    message(WARNING "QuaZip nicht gefunden! Sensorliste/IO-Belegung deaktiviert.")
+    message(WARNING "Installation: git clone https://github.com/stachenov/quazip external/quazip")
+endif()
 
 # ============================================================================
 # BricsCAD Libraries
@@ -185,6 +250,13 @@ target_link_libraries(batch_processing_plugin PRIVATE
     Qt6::Core
     Qt6::Widgets
 )
+
+# QuaZip linken (wenn verfuegbar)
+if(TARGET QuaZip::QuaZip)
+    target_link_libraries(batch_processing_plugin PRIVATE QuaZip::QuaZip)
+    target_compile_definitions(batch_processing_plugin PRIVATE HAS_QUAZIP=1)
+    message(STATUS "QuaZip linked")
+endif()
 
 # ============================================================================
 # Output Configuration
