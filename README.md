@@ -10,7 +10,7 @@ Das Plugin bietet sechs Funktionsbereiche als Tabs im Hauptfenster:
 **Attributes** – Blockattribute gezielt ändern (nach Block, Tag, Sichtbarkeit filterbar)
 **Layers** – Layer löschen, umbenennen, einfrieren, Farbe/Linientyp/Transparenz ändern
 **LISP** – Eigene LISP-Skripte automatisiert auf alle DWG-Dateien anwenden
-**OpenCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Deckblatt, Inhaltsverzeichnis, PDF-Publish)
+**OpenCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Sensorliste, IO-Belegung, Deckblatt, Inhaltsverzeichnis, PDF-Publish)
 
 ## Voraussetzungen
 
@@ -157,6 +157,8 @@ GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Funktionen:
 - **Summenblätter** – ASP-Summe, Los-Summe, Projekt-Summe automatisch generieren
 - **Deckblatt** – Deckblätter für Los/ASP/Gewerk/Anlage-Hierarchie
 - **Inhaltsverzeichnis** – Automatische Erstellung mit 21 Einträgen pro Seite
+- **Sensorliste** – Automatische Erstellung aus Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`)
+- **IO-Belegung** – ODS-Vorlagen-basierte Generierung von IO-Belegungsplänen (`OdsTemplateWriter`, Referenz: `iomodule.csv`)
 - **PDF-Publish** – DSD-basierter Multi-Sheet-PDF-Export
 
 ## Projektstruktur
@@ -170,6 +172,26 @@ GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Funktionen:
 │   └── DEVELOPMENT.md          Entwickler-Hinweise
 ├── external/
 │   └── brx_sdk/                BRX SDK (nicht im Repository)
+├── sample_project/
+│   ├── 00- BricsCAD Plugin/    Kompiliertes BRX-Binary
+│   ├── 01- Referenzen/
+│   │   ├── BAS.csv             BAS-Konfiguration
+│   │   ├── GA_FL_VORLAGE.ods   GA-FL Vorlage
+│   │   ├── iomodule.csv        IO-Modul-Referenzdaten
+│   │   ├── opencirt_config.json Projektkonfiguration
+│   │   ├── plankopfdaten.csv   Plankopf-Attribute
+│   │   └── sensor.csv          Sensor-Referenzdaten
+│   ├── 02- Skripte/            LISP-Skripte
+│   ├── 03- Blockbibliothek/    DWG-Blockvorlagen
+│   ├── 04- Vorlagen/
+│   │   ├── OC_VORLAGE_DIN_A2_V12.dwg
+│   │   ├── OC_VORLAGE_EINTRAG_INHALT_DIN_A2_V_4.dwg
+│   │   ├── OC_VORLAGE_GA_FL.dwg
+│   │   ├── OC_VORLAGE_IO_BELEGUNG_V_1.ods
+│   │   └── OC_VORLAGE_SENSORLISTE_V_1.ods
+│   ├── 05- Projekt Zeichnungen/
+│   ├── 06- Plot/
+│   └── BEDIENUNGSANLEITUNG.md  Bedienungsanleitung (12 Kapitel)
 └── src/
     ├── windows_fix.h           Qt 6.8+ / Windows SDK Kompatibilität
     ├── brx_force_include.h     BRX Platform-Header
