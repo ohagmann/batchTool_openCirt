@@ -156,18 +156,12 @@ signals:
 
 private slots:
     // Button handlers
-    void onPlankopfCsvGenerate();
-    void onDeckblattGenerate();
-    void onBmkGenerate();
-    void onBasGenerate();
-    void onGaFlGenerate();
-    void onTextwidthAdjust();
     void onFullProjectGenerate();
-    
+
     void onEnableToggled(bool enabled);
     void onPublishPdf();
     void onSensorListeGenerate();
-    void onIoBelegungGenerate();
+    void onDatenpunktExport();
     
     /// Timer callback: poll for Phase 1 completion marker
     void onPhase1PollTimer();
@@ -248,10 +242,20 @@ private:
     
     /// Generate SCR for Deckblatt creation
     QString generateDeckblattScr();
-    
-    /// Generate LISP snippet to set ASP attribute in all Plankopf blocks
-    QString generateSetAspSnippet(const QString& aspValue);
-    
+
+    /// Generate LISP snippet to set ASP/GEWERK/ANLAGE in all blocks carrying
+    /// those tags. Empty strings clear the respective attribute.
+    QString generateSetHierarchieSnippet(const QString& aspValue,
+                                         const QString& gewerkValue,
+                                         const QString& anlageValue);
+
+    /// Derive ASP/GEWERK/ANLAGE from a folder below the drawings root
+    void deriveHierarchieFromFolder(const QString& folderPath,
+                                    QString& asp, QString& gewerk, QString& anlage);
+
+    /// Ensure m_plankopfCsvData is populated (reads plankopfdaten.csv once)
+    void ensurePlankopfCsvLoaded();
+
     /// Generate SCR to write ASP from folder hierarchy into Plankopf of each source DWG
     QString generatePlankopfAspScr(const QStringList& dwgFiles);
     
@@ -282,14 +286,14 @@ private:
     
     /// Generate summary sheets SCR
     QString generateSummarySheetScr(const QVector<SourceDrawingInfo>& drawings);
-    
+
     // ================================================================
     // Phase 4: Text Width Adjustment
     // ================================================================
-    
-    /// Find all GA-FL and summary DWGs, generate SCR for text width adjustment
-    QString generateTextwidthScr();
-    
+
+    /// Generate SCR that runs the text width adjustment over the given DWGs
+    QString generateTextwidthScrFor(const QStringList& dwgPaths);
+
     // ================================================================
     // Phase 5: Inhaltsverzeichnis + PDF Publish
     // ================================================================
@@ -377,16 +381,10 @@ private:
     QCheckBox* m_enableCheck;
     QLabel* m_statusLabel;
     
-    QPushButton* m_btnPlankopfCsv;
-    QPushButton* m_btnDeckblatt;
-    QPushButton* m_btnBmk;
-    QPushButton* m_btnBas;
-    QPushButton* m_btnGaFl;
-    QPushButton* m_btnTextwidth;
     QPushButton* m_btnFullProject;
     QPushButton* m_btnPublish;
     QPushButton* m_btnSensorliste;
-    QPushButton* m_btnIoBelegung;
+    QPushButton* m_btnDpExport;
     QPushButton* m_btnBereinigen;
     
     QCheckBox* m_chkIncludeBmk;
@@ -407,6 +405,14 @@ private:
     // GA-FL phase tracking
     GaFlPhase m_gaFlPhase = GaFlPhase::Idle;
     QString m_extractTempDir;   ///< Temp dir for extracted CSVs
+
+    /// Full paths of all summary sheets planned by generateSummarySheetScr().
+    /// Needed because the text width adjustment runs in the same SCR, i.e.
+    /// before those files exist on disk and can be found by a directory scan.
+    QStringList m_plannedSummarySheets;
+
+    /// Last filter used in the datapoint export dialog (semicolon separated)
+    QString m_dpExportFilter = "HW";
     
     // Phase 1 completion polling
     QTimer* m_phase1Timer = nullptr;    ///< Polls for marker file
