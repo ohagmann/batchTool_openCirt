@@ -1181,7 +1181,15 @@ QWidget* MainWindow::createOpenCirtTab() {
             this, [this](const QString& msg, const QString& type) {
         logMessage(msg, type);
     });
-    
+
+    // Fortschritt laufender Schritte in die Statuszeile - nicht ins Protokoll,
+    // dort stehen nur Ergebnisse. Leerer Text heisst "fertig".
+    connect(m_openCirtTab, &OpenCirtTab::statusMessage,
+            this, [this](const QString& text) {
+        if (!m_statusLabel) return;
+        m_statusLabel->setText(text.isEmpty() ? QStringLiteral("Ready") : text);
+    });
+
     // Sync project root from General tab folder
     // The folder edit is already connected - we update OpenCirt when it changes
     if (m_folderEdit && !m_folderEdit->text().isEmpty()) {

@@ -7,6 +7,16 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+## [1.3.1] – 2026-08-23
+
+### Changed
+- Die Erfolgsmeldung des Datenpunkt-Exports nennt jetzt die tatsächliche Zeilenzahl der Datei und schlüsselt sie auf: `972 Zeilen (869 Datenpunktzeilen + 103 Reservekanäle)`. Bisher wurde nur der Datenpunktanteil gemeldet – die Reservezeilen entstehen erst beim Auffüllen der angefangenen Module und fehlten in der Zählung, die Meldung wich damit von der Datei ab. Gezählt wird nun der Schreibzähler selbst statt einer nebenher geführten Summe, die auseinanderlaufen konnte
+- Der Lesefortschritt des Exports läuft in die Statuszeile statt ins Protokoll (neues Signal `OpenCirtTab::statusMessage`, leerer Text setzt zurück). Das Protokoll führt damit nur noch Ergebnisse; die Taktung ist von 50 auf 20 Blätter verkürzt, weil eine Statuszeile das verträgt
+
+### Removed
+- Zwei veraltete `batchtool.brx`-Kopien außerhalb des Repos entfernt (Stand 15.03. und 25.03.), damit beim Laden des Moduls keine Verwechslung mehr möglich ist
+
+
 ## [1.3.0] – 2026-08-23
 
 ### Changed

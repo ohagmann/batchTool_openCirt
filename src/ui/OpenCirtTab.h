@@ -149,6 +149,12 @@ public:
 
 signals:
     void logMessage(const QString& message, const QString& type);
+
+    /// Kurzlebiger Fortschritt fuer die Statuszeile. Gehoert bewusst nicht ins
+    /// Protokoll, weil dort nur Ergebnisse stehen sollen. Ein leerer Text
+    /// bedeutet "fertig, Statuszeile zuruecksetzen".
+    void statusMessage(const QString& text);
+
     void processingStarted();
     void processingFinished(bool success, const QString& summary);
     void progressUpdated(const QString& phase, int current, int total);

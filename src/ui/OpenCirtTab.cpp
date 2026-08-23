@@ -1510,8 +1510,11 @@ void OpenCirtTab::onDatenpunktExport() {
 
     int sheetNr = 0;
     for (const QString& sheetPath : gaFlFiles) {
-        if (++sheetNr % 50 == 0) {
-            log(QString("  %1 von %2 Blaettern gelesen").arg(sheetNr).arg(gaFlFiles.size()));
+        // Fortschritt in die Statuszeile, nicht ins Protokoll: das Lesen der
+        // Blaetter ist ein Zwischenschritt, im Protokoll bleiben die Ergebnisse.
+        if (++sheetNr % 20 == 0) {
+            emit statusMessage(QString("GA-FL lesen: %1 von %2 Blaettern")
+                               .arg(sheetNr).arg(gaFlFiles.size()));
             QApplication::processEvents();
         }
 
@@ -1623,6 +1626,9 @@ void OpenCirtTab::onDatenpunktExport() {
             }
         }
     }
+
+    // Statuszeile freigeben - der Rest laeuft ohne spuerbare Wartezeit.
+    emit statusMessage(QString());
 
     if (unlesbareBlaetter > 0) {
         log(QString("%1 Blatt/Blaetter ohne lesbaren GA-FL-Block uebersprungen")
@@ -1849,8 +1855,16 @@ void OpenCirtTab::onDatenpunktExport() {
         }
     }
 
-    logSuccess(QString("Datenpunkt-Export erstellt: %1 Zeilen -> %2%3")
-               .arg(totalRows).arg(outputPath).arg(summary));
+    // pos laeuft ueber alle ASPs durch und wird nach jeder geschriebenen Zeile
+    // erhoeht - pos-1 ist damit die tatsaechliche Zeilenzahl der Datei,
+    // Reservezeilen eingeschlossen.
+    const int zeilenInDatei = pos - 1;
+    const int reserveZeilen = zeilenInDatei - totalRows;
+
+    logSuccess(QString("Datenpunkt-Export erstellt: %1 Zeilen "
+                       "(%2 Datenpunktzeilen + %3 Reservekanaele) -> %4%5")
+               .arg(zeilenInDatei).arg(totalRows).arg(reserveZeilen)
+               .arg(outputPath).arg(summary));
 
     // Warnung bei Referenzwerten > 1
     if (!mehrfachBelegung.isEmpty()) {
@@ -1870,11 +1884,14 @@ void OpenCirtTab::onDatenpunktExport() {
     QMessageBox::information(this, "Datenpunkte exportieren",
         QString("Export erfolgreich!\n\n"
                 "Filter: %1\n"
-                "%2 Zeilen aus %3 Datenpunkten, davon %4 mit Kanalbelegung\n"
-                "%5\n\n"
-                "Ausgabe: %6")
+                "%2 Zeilen in der Datei = %3 Datenpunktzeilen + %4 Reservekanaele\n"
+                "%5 von %6 Datenpunkten passten zum Filter, davon %7 mit Kanalbelegung\n"
+                "%8\n\n"
+                "Ausgabe: %9")
         .arg(filterAll ? QStringLiteral("alle Integrationsarten") : filterList.join("; "))
-        .arg(totalRows).arg(matchedDp).arg(totalIo).arg(summary).arg(outputPath));
+        .arg(zeilenInDatei).arg(totalRows).arg(reserveZeilen)
+        .arg(matchedDp).arg(totalDp).arg(totalIo)
+        .arg(summary).arg(outputPath));
 }
 
 // ============================================================================
