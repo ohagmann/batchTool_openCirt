@@ -31,7 +31,6 @@
 QT_BEGIN_NAMESPACE
 class QCheckBox;
 class QPushButton;
-class QTextEdit;
 class QLabel;
 class QGroupBox;
 class QProgressBar;
@@ -390,7 +389,6 @@ private:
     QCheckBox* m_chkIncludeBmk;
     QCheckBox* m_chkIncludeBas;
     
-    QTextEdit* m_logWidget;
     QProgressBar* m_progressBar;
     
     // ================================================================

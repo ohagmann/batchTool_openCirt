@@ -7,6 +7,19 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+## [1.3.0] – 2026-08-23
+
+### Changed
+- **Oberfläche folgt BricsCADs Hell-/Dunkeleinstellung.** Maßgeblich ist die Systemvariable `COLORTHEME`, gelesen bei jedem Aufruf von `BATCHTOOL` – nach einem Themenwechsel genügt Schließen und erneutes Öffnen. Der Stil ist jetzt Fusion: der auf Windows 11 voreingestellte Qt-Stil zeichnet Flächen und abgerundete Ecken selbst und ignoriert die Palette, weshalb dort weder ein dunkles Thema noch BricsCADs eckige Optik möglich wäre
+- Keine fest verdrahteten Farbwerte mehr in der Oberfläche. Beschriftungen tragen eine Rolle (`Muted`, `Success`, `Warning`, `ErrorBold` …), die beim Themenwechsel neu berechnet wird; bisher waren die Farben für ein helles Thema geschrieben und auf dunklem Grund kaum lesbar
+- Der OpenCirt-Tab führt kein eigenes Protokoll mehr. Meldungen liefen bisher doppelt – einmal im Tab, einmal im *Processing Log* –, was rund die halbe Fensterhöhe für denselben Text verbrauchte und unter dem Protokollkasten einen leeren Streifen hinterließ. Das *Processing Log* ist jetzt die einzige Ansicht, ohne Höhenbegrenzung und mit fester Beteiligung an der Fensterhöhe
+- Das *Processing Log* färbt Meldungen nach Art ein (Fehler, Warnung, Erfolg). Das konnte bisher nur das entfallene Tab-Protokoll
+- Trenner zwischen den Schaltflächengruppen ist ein echtes `QFrame` statt eines leeren `QLabel` mit Rahmen, das auf dunklem Grund unsichtbar blieb
+
+### Added
+- `src/ui/Theming.cpp/h` – Palette, Stil und rollenbasierte Farben, abgeleitet aus `COLORTHEME`
+
+
 ## [1.2.0] – 2026-08-22
 
 ### Added

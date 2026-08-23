@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QDialog>
 #include <QThread>
+#include <QVector>
 #include <memory>
 
 
@@ -134,6 +135,14 @@ private:
     // Helper methods
     void updateUiState(bool processing);
     void logMessage(const QString& message, const QString& type = "INFO");
+
+public:
+    /// Thema von BricsCAD uebernehmen und das Protokoll neu einfaerben.
+    /// Wird beim Oeffnen des Fensters aufgerufen, damit ein Wechsel zwischen
+    /// hellem und dunklem Thema uebernommen wird.
+    void applyTheme();
+
+private:
     std::unique_ptr<ProcessingOptions> getOptionsFromUi();
     void setOptionsToUi(const ProcessingOptions& options);
     void loadSettings();
@@ -166,6 +175,24 @@ private:
     QTabWidget* m_tabWidget;
     QLabel* m_statusLabel;
     QTextEdit* m_logTextEdit;
+
+    /// Rohfassung der Protokollzeilen. Noetig, weil die Farben als HTML im
+    /// Text stecken: ohne die Rohdaten liessen sich bereits geschriebene
+    /// Zeilen bei einem Themenwechsel nicht neu einfaerben.
+    struct LogEntry {
+        QString timestamp;
+        QString type;
+        QString message;
+    };
+    QVector<LogEntry> m_logEntries;
+
+    /// Protokoll aus m_logEntries im aktuellen Thema neu aufbauen
+    void renderLog();
+
+    /// HTML einer Protokollzeile im aktuellen Thema
+    QString formatLogEntry(const QString& timestamp,
+                           const QString& type,
+                           const QString& message) const;
     QProgressBar* m_progressBar;
     QPushButton* m_startButton;
     QPushButton* m_stopButton;

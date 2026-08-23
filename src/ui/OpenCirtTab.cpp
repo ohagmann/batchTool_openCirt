@@ -22,6 +22,7 @@
 #include "dbents.h"    // AcDbBlockReference, AcDbAttribute for reading block attributes
 
 #include "OpenCirtTab.h"
+#include "Theming.h"
 #include "../utils/SensorKeywordLoader.h"
 #include "../utils/OdsTemplateWriter.h"
 
@@ -31,7 +32,6 @@
 #include <QGroupBox>
 #include <QCheckBox>
 #include <QPushButton>
-#include <QTextEdit>
 #include <QLabel>
 #include <QProgressBar>
 #include <QMessageBox>
@@ -53,6 +53,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QLineEdit>
+#include <QFrame>
 
 // BRX result codes
 #ifndef RTNORM
@@ -163,7 +164,7 @@ void OpenCirtTab::setupUi() {
     topLayout->addWidget(m_enableCheck);
     
     m_statusLabel = new QLabel("Kein Projekt geladen");
-    m_statusLabel->setStyleSheet("QLabel { color: #888; font-style: italic; }");
+    Theming::setRole(m_statusLabel, Theming::Role::MutedItalic);
     topLayout->addStretch();
     topLayout->addWidget(m_statusLabel);
     mainLayout->addLayout(topLayout);
@@ -179,7 +180,7 @@ void OpenCirtTab::setupUi() {
         btn->setMinimumWidth(220);
         btn->setMinimumHeight(32);
         auto* descLabel = new QLabel(description);
-        descLabel->setStyleSheet("QLabel { color: #666; }");
+        Theming::setRole(descLabel, Theming::Role::Muted);
         rowLayout->addWidget(btn);
         rowLayout->addWidget(descLabel);
         rowLayout->addStretch();
@@ -199,10 +200,11 @@ void OpenCirtTab::setupUi() {
         "Projekt bereinigen",
         "Temporaere Dateien und Backups loeschen");
 
-    // Separator vor den Ausgabefunktionen
+    // Trenner vor den Ausgabefunktionen
     buttonLayout->addSpacing(8);
-    auto* separator = new QLabel("");
-    separator->setFrameStyle(QFrame::HLine | QFrame::Sunken);
+    auto* separator = new QFrame();
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Sunken);
     buttonLayout->addWidget(separator);
     buttonLayout->addSpacing(4);
 
@@ -252,19 +254,10 @@ void OpenCirtTab::setupUi() {
     m_progressBar->setTextVisible(true);
     mainLayout->addWidget(m_progressBar);
     
-    // --- Log Output ---
-    auto* logGroup = new QGroupBox("Protokoll");
-    auto* logLayout = new QVBoxLayout(logGroup);
-    
-    m_logWidget = new QTextEdit();
-    m_logWidget->setReadOnly(true);
-    m_logWidget->setMaximumHeight(180);
-    m_logWidget->setFont(QFont("Consolas", 8));
-    m_logWidget->setStyleSheet(
-        "QTextEdit { background-color: #1e1e1e; color: #d4d4d4; }");
-    logLayout->addWidget(m_logWidget);
-    
-    mainLayout->addWidget(logGroup);
+    // Kein eigener Protokollkasten mehr: alle Meldungen laufen ueber das Signal
+    // logMessage in das "Processing Log" des Hauptfensters. Zwei Ansichten
+    // desselben Textes haben nur Platz gekostet.
+    mainLayout->addStretch();
     
     // --- Connections ---
     connect(m_enableCheck, &QCheckBox::toggled, this, &OpenCirtTab::onEnableToggled);
@@ -286,13 +279,13 @@ void OpenCirtTab::onEnableToggled(bool enabled) {
     
     if (enabled && !m_projectRoot.isEmpty()) {
         m_statusLabel->setText("Bereit");
-        m_statusLabel->setStyleSheet("QLabel { color: #2e7d32; font-weight: bold; }");
+        Theming::setRole(m_statusLabel, Theming::Role::SuccessBold);
     } else if (enabled) {
         m_statusLabel->setText("Bitte Projektordner im General-Tab angeben");
-        m_statusLabel->setStyleSheet("QLabel { color: #e65100; }");
+        Theming::setRole(m_statusLabel, Theming::Role::Warning);
     } else {
         m_statusLabel->setText("OpenCirt deaktiviert");
-        m_statusLabel->setStyleSheet("QLabel { color: #888; font-style: italic; }");
+        Theming::setRole(m_statusLabel, Theming::Role::MutedItalic);
     }
 }
 
@@ -481,10 +474,10 @@ void OpenCirtTab::setProjectRoot(const QString& root) {
     if (!root.isEmpty()) {
         loadConfig();
         m_statusLabel->setText(QString("Projekt: %1").arg(QDir(root).dirName()));
-        m_statusLabel->setStyleSheet("QLabel { color: #2e7d32; }");
+        Theming::setRole(m_statusLabel, Theming::Role::Success);
     } else {
         m_statusLabel->setText("Kein Projekt geladen");
-        m_statusLabel->setStyleSheet("QLabel { color: #888; font-style: italic; }");
+        Theming::setRole(m_statusLabel, Theming::Role::MutedItalic);
     }
     
     onEnableToggled(m_enableCheck->isChecked());
@@ -817,23 +810,8 @@ bool OpenCirtTab::executeScrFile(const QString& scrContent, const QString& descr
 // ============================================================================
 
 void OpenCirtTab::log(const QString& message, const QString& type) {
-    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
-    QString color = "#d4d4d4";
-    
-    if (type == "ERROR") color = "#f44747";
-    else if (type == "SUCCESS") color = "#6a9955";
-    else if (type == "WARN") color = "#ce9178";
-    
-    m_logWidget->append(
-        QString("<span style='color:#858585'>[%1]</span> "
-                "<span style='color:%2'>%3</span>")
-        .arg(timestamp, color, message.toHtmlEscaped()));
-    
-    // Scroll to bottom
-    QTextCursor cursor = m_logWidget->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    m_logWidget->setTextCursor(cursor);
-    
+    // Ausgabe uebernimmt das "Processing Log" des Hauptfensters. Der Tab haelt
+    // bewusst keine zweite Ansicht desselben Textes.
     emit logMessage(message, type);
 }
 

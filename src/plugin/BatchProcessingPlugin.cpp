@@ -17,6 +17,7 @@
 #include "BatchProcessingPlugin.h"
 #include "Commands.h"
 #include "../ui/MainWindow.h"
+#include "../ui/Theming.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -131,7 +132,11 @@ void batchProcessCommand() {
     if (!g_mainWindow) {
         g_mainWindow = new BatchProcessing::MainWindow();
     }
-    
+
+    // Thema bei jedem Oeffnen neu anwenden: schaltet der Anwender BricsCAD
+    // zwischenzeitlich zwischen hell und dunkel um, folgt das Fenster.
+    g_mainWindow->applyTheme();
+
     g_mainWindow->show();
     g_mainWindow->raise();
     g_mainWindow->activateWindow();

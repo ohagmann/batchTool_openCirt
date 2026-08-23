@@ -53,9 +53,10 @@ CLEAN_BUILD.bat
 ```
 
 Das Skript führt folgende Schritte aus:
-1. Löscht alte Build-Artefakte
-2. CMake-Konfiguration (Visual Studio 17 2022, x64, Release)
-3. MSBuild-Kompilierung
+1. Beendet laufende BricsCAD-Instanzen – solange BricsCAD läuft, hält es `batchtool.brx` geöffnet und der Build scheitert am Linker. Zuerst wird BricsCAD regulär zum Beenden aufgefordert (Speichern-Rückfragen erscheinen wie gewohnt), erst nach 30 Sekunden folgt eine Rückfrage zum harten Beenden. `CLEAN_BUILD.bat /force` überspringt diese Rückfrage
+2. Löscht alte Build-Artefakte
+3. CMake-Konfiguration (Visual Studio 17 2022, x64, Release)
+4. MSBuild-Kompilierung
 
 Das fertige Plugin liegt anschließend unter `build_windows\Release\batchtool.brx`.
 
@@ -105,7 +106,9 @@ set(BRICSCAD_DIR "C:/Program Files/Bricsys/BricsCAD V26 de_DE")
 1. Im Tab **General** den Quellordner mit DWG-Dateien auswählen
 2. In einem oder mehreren Tabs die gewünschten Operationen konfigurieren
 3. **Start** klicken
-4. Fortschritt im Log beobachten
+4. Fortschritt im **Processing Log** am unteren Fensterrand beobachten – dort laufen die Meldungen aller Tabs zusammen
+
+Das Fenster übernimmt BricsCADs Hell-/Dunkeleinstellung. Maßgeblich ist die Systemvariable `COLORTHEME`; sie wird bei jedem Aufruf von `BATCHTOOL` neu gelesen. Nach einem Themenwechsel genügt es also, das Fenster zu schließen und den Befehl erneut aufzurufen.
 
 ### Tab: General
 
@@ -185,6 +188,8 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
 ├── .gitignore
 ├── docs/
 │   └── DEVELOPMENT.md          Entwickler-Hinweise
+├── tools/
+│   └── Close-BricsCAD.ps1      Beendet BricsCAD vor dem Build
 ├── external/
 │   └── brx_sdk/                BRX SDK (nicht im Repository)
 ├── sample_project/
@@ -224,10 +229,13 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
     ├── ui/
     │   ├── MainWindow.cpp/h            Hauptfenster mit Tab-Verwaltung
     │   ├── OpenCirtTab.cpp/h           GA-Planungsautomatisierung
+    │   ├── Theming.cpp/h               Hell-/Dunkelthema aus BricsCAD COLORTHEME
     │   └── widgets/
     │       └── AcadColorGrid.cpp/h     AutoCAD-Farbauswahl-Widget
     └── utils/
-        └── Logger.h                    Logging-Hilfsfunktionen
+        ├── Logger.h                    Logging-Hilfsfunktionen
+        ├── SensorKeywordLoader.cpp/h   Keyword-Abgleich für die Sensorliste
+        └── OdsTemplateWriter.cpp/h     ODS-Vorlagen befüllen
 ```
 
 ## Hinweise

@@ -20,6 +20,7 @@
 
 // Eigene Headers
 #include "MainWindow.h"
+#include "Theming.h"
 #include "OpenCirtTab.h"
 #include "../core/DwgProcessor.h"
 #include "widgets/AcadColorGrid.h"
@@ -35,6 +36,8 @@
 #include <QGridLayout>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QTextCursor>
+#include <QColor>
 #include <QPushButton>
 #include <QProgressBar>
 #include <QLineEdit>
@@ -81,9 +84,17 @@ MainWindow::MainWindow(QWidget *parent)
     , m_processingThread(nullptr)
     , m_progressDialog(nullptr)
 {
+    // Zuerst das Thema setzen: setRole() waehrend setupUi() rechnet seine
+    // Farben aus der Palette, die muss also schon stimmen.
+    Theming::apply(this);
+
     setupUi();
     connectSignals();
     updateUiState(false);
+
+    // Nach dem Aufbau erneut, damit Stil und Rollen auch die eben erzeugten
+    // Widgets erreichen.
+    applyTheme();
     
     // Create processing engine
     m_engine = DwgProcessorFactory::createBatchEngine();
@@ -190,7 +201,7 @@ void MainWindow::createLayerOperationItem(const QString& operationType) {
     
     // Add hint text at the top
     auto* hintLabel = new QLabel("Select layer name with up/down arrows, hit 'Tab' to choose the selected layer as 'Layer name'");
-    hintLabel->setStyleSheet("QLabel { color: #0066cc; font-style: italic; padding: 5px; background-color: #f0f0f0; }");
+    Theming::setRole(hintLabel, Theming::Role::HintBox);
     hintLabel->setWordWrap(true);
     layout->addWidget(hintLabel);
     
@@ -348,7 +359,7 @@ void MainWindow::createLayerOperationItem(const QString& operationType) {
     } else if (operationType == "Delete Layer") {
         // No additional inputs needed, just layer selection from list
         auto* warningLabel = new QLabel("⚠️ Warning: This will permanently delete the selected layer!");
-        warningLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
+        Theming::setRole(warningLabel, Theming::Role::ErrorBold);
         layout->addWidget(warningLabel);
         
         // Set tab order - only search and list
@@ -605,7 +616,7 @@ void MainWindow::createCentralWidget() {
     
     // Create tab widget
     m_tabWidget = new QTabWidget();
-    mainLayout->addWidget(m_tabWidget);
+    mainLayout->addWidget(m_tabWidget, 3);
     
     // Create tabs
     m_tabWidget->addTab(createGeneralTab(), "General");
@@ -621,11 +632,13 @@ void MainWindow::createCentralWidget() {
     
     m_logTextEdit = new QTextEdit();
     m_logTextEdit->setReadOnly(true);
-    m_logTextEdit->setMaximumHeight(150);
-    m_logTextEdit->setFont(QFont("Monospace", 9));
+    m_logTextEdit->setMinimumHeight(150);
+    m_logTextEdit->setFont(QFont("Consolas", 9));
     logLayout->addWidget(m_logTextEdit);
-    
-    mainLayout->addWidget(logGroup);
+
+    // Kein Hoehendeckel mehr: das Protokoll ist die einzige Ausgabe und
+    // bekommt einen festen Anteil an der Fensterhoehe.
+    mainLayout->addWidget(logGroup, 2);
     
     // Progress bar
     m_progressBar = new QProgressBar();
@@ -974,7 +987,7 @@ QWidget* MainWindow::createLayerTab() {
     
     // Add hint text above scan area
     auto* scanHintLabel = new QLabel("Scan all layers to get the layer names as proposals in the following dialogs");
-    scanHintLabel->setStyleSheet("QLabel { color: #0066cc; font-style: italic; }");
+    Theming::setRole(scanHintLabel, Theming::Role::Accent);
     scanHintLabel->setWordWrap(true);
     analysisLayout->addWidget(scanHintLabel);
     
@@ -1002,7 +1015,7 @@ QWidget* MainWindow::createLayerTab() {
     analysisLayout->addLayout(analysisButtonLayout);
     
     m_layerStatsLabel = new QLabel("No layers scanned");
-    m_layerStatsLabel->setStyleSheet("QLabel { color: #666; }");
+    Theming::setRole(m_layerStatsLabel, Theming::Role::Muted);
     analysisLayout->addWidget(m_layerStatsLabel);
     
     layout->addWidget(analysisGroup);
@@ -1043,7 +1056,7 @@ QWidget* MainWindow::createLayerTab() {
     operationsLayout->addLayout(operationButtonLayout);
     
     m_layerOpStatusLabel = new QLabel("No operations defined");
-    m_layerOpStatusLabel->setStyleSheet("QLabel { color: #666; }");
+    Theming::setRole(m_layerOpStatusLabel, Theming::Role::Muted);
     operationsLayout->addWidget(m_layerOpStatusLabel);
     
     layout->addWidget(operationsGroup);
@@ -1133,7 +1146,7 @@ QWidget* MainWindow::createLispTab() {
     fileLayout->addLayout(fileButtonLayout);
     
     m_lispStatusLabel = new QLabel("No scripts loaded");
-    m_lispStatusLabel->setStyleSheet("QLabel { color: #666; }");
+    Theming::setRole(m_lispStatusLabel, Theming::Role::Muted);
     fileLayout->addWidget(m_lispStatusLabel);
     
     layout->addWidget(fileGroup);
@@ -2263,11 +2276,11 @@ void MainWindow::updateLispStatus() {
     
     if (totalCount == 0) {
         m_lispStatusLabel->setText("No scripts loaded");
-        m_lispStatusLabel->setStyleSheet("QLabel { color: #666; }");
+        Theming::setRole(m_lispStatusLabel, Theming::Role::Muted);
     } else {
         m_lispStatusLabel->setText(QString("%1 scripts loaded, %2 enabled")
             .arg(totalCount).arg(enabledCount));
-        m_lispStatusLabel->setStyleSheet("QLabel { color: #008000; }");
+        Theming::setRole(m_lispStatusLabel, Theming::Role::Success);
     }
 }
 
@@ -2284,21 +2297,65 @@ void MainWindow::updateUiState(bool processing) {
     m_isProcessing = processing;
 }
 
+/// HTML einer Protokollzeile im aktuellen Thema
+QString MainWindow::formatLogEntry(const QString& timestamp,
+                                   const QString& type,
+                                   const QString& message) const
+{
+    QColor farbe = palette().color(QPalette::Text);
+    if (type == "ERROR" || type == "ERR")         farbe = Theming::errorText(this);
+    else if (type == "SUCCESS")                   farbe = Theming::successText(this);
+    else if (type == "WARN" || type == "WARNING") farbe = Theming::warningText(this);
+
+    return QString("<span style='color:%1'>[%2]</span> "
+                   "<span style='color:%3'>%4</span>")
+           .arg(Theming::mutedText(this).name(),
+                timestamp,
+                farbe.name(),
+                message.toHtmlEscaped());
+}
+
 void MainWindow::logMessage(const QString& message, const QString& type) {
-    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
-    QString formattedMsg = QString("[%1] %2: %3")
-                          .arg(timestamp).arg(type).arg(message);
-    m_logTextEdit->append(formattedMsg);
+    const QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+
+    // Rohfassung merken, damit die Zeile bei einem Themenwechsel neu
+    // eingefaerbt werden kann. Deckel gegen unbegrenztes Wachsen.
+    m_logEntries.append({timestamp, type, message});
+    if (m_logEntries.size() > 20000) m_logEntries.remove(0, 5000);
+
+    m_logTextEdit->append(formatLogEntry(timestamp, type, message));
+
+    // immer am Ende bleiben
+    QTextCursor cursor = m_logTextEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    m_logTextEdit->setTextCursor(cursor);
+}
+
+void MainWindow::renderLog() {
+    // Die Farben stecken als HTML im Text - beim Themenwechsel muss das
+    // Protokoll daher komplett neu aufgebaut werden.
+    m_logTextEdit->clear();
+    for (const LogEntry& e : m_logEntries) {
+        m_logTextEdit->append(formatLogEntry(e.timestamp, e.type, e.message));
+    }
+    QTextCursor cursor = m_logTextEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    m_logTextEdit->setTextCursor(cursor);
+}
+
+void MainWindow::applyTheme() {
+    Theming::apply(this);
+    renderLog();
 }
 
 void MainWindow::updateLayerOperationStatus() {
     int totalCount = m_layerOperationsWidget->count();
     if (totalCount == 0) {
         m_layerOpStatusLabel->setText("No operations defined");
-        m_layerOpStatusLabel->setStyleSheet("QLabel { color: #666; }");
+        Theming::setRole(m_layerOpStatusLabel, Theming::Role::Muted);
     } else {
         m_layerOpStatusLabel->setText(QString("%1 operations defined").arg(totalCount));
-        m_layerOpStatusLabel->setStyleSheet("QLabel { color: #008000; }");
+        Theming::setRole(m_layerOpStatusLabel, Theming::Role::Success);
     }
 }
 
@@ -2395,6 +2452,7 @@ void MainWindow::setOptionsToUi(const ProcessingOptions& options) {
 // ============================================================================
 
 void MainWindow::onClearLog() {
+    m_logEntries.clear();
     m_logTextEdit->clear();
 }
 
