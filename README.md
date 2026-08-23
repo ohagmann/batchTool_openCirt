@@ -1,6 +1,17 @@
 # batchTool / openCirt – BricsCAD Batch Processing & GA-Planungssoftware Plugin
 
 Ein BRX-Plugin (C++/Qt6) für die automatisierte Massenverarbeitung von DWG-Dateien und zur Erstellung von Planungsunterlagen für die Gebäudeautomation (nach VDI3814) in BricsCAD V26. Statt Zeichnungen einzeln zu öffnen und manuell zu bearbeiten, können wiederkehrende Aufgaben über beliebig viele Dateien in einem Durchgang erledigt werden. Dazu können Texte, Attributwerte, Layer-Operationen und Lisp-Skripte genutzt werden. Im openCirt Tab können außerdem alle Aufgaben für die Erstellung von GA-Automationsschemata inkl. GA-FL erledigt werden. openCirt ist DIE freie GA-Planungssoftware für alle - kostenlos, hocheffizient und einfach zu bedienen.
+
+> ## ⚠️ Hinweis: Bildschirmflackern (Photosensitivität)
+>
+> Bei Batch-Läufen (LISP-Verarbeitung) und beim PDF-Publish werden Zeichnungen in schneller Folge im sichtbaren BricsCAD-Fenster geöffnet, verarbeitet, gespeichert und geschlossen. Dabei entsteht ein **rasches, großflächiges Flackern** des Bildschirms.
+>
+> Solche schnellen Hell-Dunkel-Wechsel können bei Menschen mit **photosensitiver Epilepsie** Anfälle auslösen und auch bei nicht betroffenen Personen Unwohlsein, Kopfschmerzen oder Augenbelastung verursachen. Viele Betroffene wissen nichts von ihrer Empfindlichkeit, bis ein Anfall auftritt.
+>
+> **Empfehlung:** Während eines laufenden Batch- oder Publish-Vorgangs nicht dauerhaft auf den Bildschirm schauen, das Fenster minimieren oder den Arbeitsplatz verlassen. Personen mit bekannter Photosensitivität sollten den Lauf nicht beobachten.
+>
+> Technischer Hintergrund: BricsCAD bietet für diese Verarbeitung keinen vollständig unsichtbaren (headless) Modus; das Skript läuft im Vordergrund-Editor, weshalb der Bildaufbau sichtbar ist. Reine Text-, Attribut- und Layer-Operationen laufen dagegen datenbankseitig ohne Bildaufbau und flackern nicht.
+
 ## Features
 
 Das Plugin bietet sechs Funktionsbereiche als Tabs im Hauptfenster:
@@ -10,7 +21,7 @@ Das Plugin bietet sechs Funktionsbereiche als Tabs im Hauptfenster:
 **Attributes** – Blockattribute gezielt ändern (nach Block, Tag, Sichtbarkeit filterbar)
 **Layers** – Layer löschen, umbenennen, einfrieren, Farbe/Linientyp/Transparenz ändern
 **LISP** – Eigene LISP-Skripte automatisiert auf alle DWG-Dateien anwenden
-**OpenCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Sensorliste, IO-Belegung, Deckblatt, Inhaltsverzeichnis, PDF-Publish)
+**OpenCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Summenblätter, Deckblätter, Inhaltsverzeichnis, Sensorliste, Datenpunkt-/IO-Export, PDF-Publish)
 
 ## Voraussetzungen
 
@@ -150,16 +161,20 @@ Hinweise:
 
 GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Funktionen:
 
-- **Plankopf** – CSV-basierte Plankopf-Attribute setzen (AG, AN, PR etc.)
-- **BMK-Nummerierung** – Betriebsmittelkennzeichen automatisch vergeben
-- **BAS-Generierung** – Bauautomationssystem aus BAS.csv erzeugen
-- **GA-FL** – Funktionslisten zweiphasig: Datenextraktion aus Quell-DWGs, dann GA-FL-Blätter erzeugen und füllen
-- **Summenblätter** – ASP-Summe, Los-Summe, Projekt-Summe automatisch generieren
-- **Deckblatt** – Deckblätter für Los/ASP/Gewerk/Anlage-Hierarchie
-- **Inhaltsverzeichnis** – Automatische Erstellung mit 21 Einträgen pro Seite
-- **Sensorliste** – Automatische Erstellung aus Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`)
-- **IO-Belegung** – ODS-Vorlagen-basierte Generierung von IO-Belegungsplänen (`OdsTemplateWriter`, Referenz: `iomodule.csv`)
-- **PDF-Publish** – DSD-basierter Multi-Sheet-PDF-Export
+Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über einen einzigen Knopf – Plankopf, Deckblätter, BMK, BAS, GA-FL, Summen und Textbreiten sind Schritte darin und werden nicht mehr einzeln bedient.
+
+- **Projekt erstellen** – der Gesamtlauf in korrekter Reihenfolge:
+  - *Plankopf* – CSV-basierte Plankopf-Attribute setzen (AG, AN, PR etc.)
+  - *Deckblätter* – für die Los/ASP/Gewerk/Anlage-Hierarchie, inkl. ASP, Gewerk und Anlage aus der Ordnerstruktur
+  - *BMK-Nummerierung* – Betriebsmittelkennzeichen automatisch vergeben
+  - *BAS-Generierung* – Bauautomationssystem aus BAS.csv erzeugen
+  - *GA-FL* – Funktionslisten zweiphasig: Datenextraktion aus Quell-DWGs, dann GA-FL-Blätter erzeugen und füllen
+  - *Summenblätter* – Gewerk-Summe, ASP-Summe, Los-Summe, Projekt-Summe sowie eine Gewerke-Auswertung je Los über alle ASPs
+  - *Textbreiten* – Breitenfaktor in GA-FL- und Summenblättern korrigieren, auch für Werte innerhalb der GA-FL-Blockdefinition
+- **Projekt bereinigen** – temporäre Dateien und Backups im Zeichnungsordner löschen (`*.bak`, `*.dwl`, `*.dwl2`, `*.sv$`, `*.ac$`, `*.tmp`, `*.log`)
+- **PDF publizieren** – DSD-basierter Multi-Sheet-PDF-Export inkl. Inhaltsverzeichnis (21 Einträge pro Seite, Plankopf aus `plankopfdaten.csv`)
+- **IO-Liste erstellen** – ODS-Vorlagen-basierter Export (`OdsTemplateWriter`, Referenz: `iomodule.csv`). Im Dialog wird nach Integrationsart gefiltert (Attribut `OC_INTEGRATIONSART_DP_n`): leer = alle Datenpunkte, `HW` = SPS-/DDC-Belegungsliste mit Modul- und Kanalzuordnung, `BUS;SMI` = mehrere Arten. Die Integrationsart steht als eigene Spalte in der Liste; *Modul-Typ* wird nur für HW-Zeilen gefüllt
+- **Sensorliste erstellen** – Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`)
 
 ## Projektstruktur
 

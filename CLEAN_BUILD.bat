@@ -11,6 +11,21 @@ echo Clean Build - Qt 6.8+ Windows Header Fix
 echo ============================================================
 echo.
 
+REM Step 0: BricsCAD beenden - haelt sonst batchtool.brx gesperrt
+echo ============================================================
+echo [STEP 0] Laufende BricsCAD-Instanzen beenden
+echo ============================================================
+set "CLOSE_ARGS="
+if /I "%~1"=="/force" set "CLOSE_ARGS=-Force"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Close-BricsCAD.ps1" %CLOSE_ARGS%
+if errorlevel 1 (
+    echo.
+    echo BUILD ABGEBROCHEN - BricsCAD blockiert batchtool.brx.
+    pause
+    exit /b 1
+)
+echo.
+
 REM Step 1: Delete build directories
 echo [STEP 1] Cleaning build directories...
 if exist "build_windows" (
@@ -61,8 +76,8 @@ echo ============================================================
 echo ✅ BUILD SUCCESSFUL!
 echo ============================================================
 echo.
-echo Output: build_windows\Release\BatchProcessing.brx
+echo Output: build_windows\Release\batchtool.brx
 echo.
-dir build_windows\Release\BatchProcessing.brx
+dir build_windows\Release\batchtool.brx
 echo.
 pause
