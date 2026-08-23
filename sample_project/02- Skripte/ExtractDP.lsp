@@ -125,6 +125,7 @@
   (setq result '())
   (setq plankopf-attrs '(
     "ASP" "GEWERK" "ANLAGE" "ZEICHNUNGSNUMMER" "SSK"
+    "LPH"
     "KOSTENGRUPPE" "ORTSKENNZEICHEN" "BEMERKUNG"
     "ERSTELLER" "ERSTELLDATUM" "GEPRUEFT" "NORM"
     "NAME1" "NAME2" "NAME3"
@@ -392,8 +393,15 @@
           (setq bas-attr (strcat "OC_BAS_DP_" (itoa dp-index)))
           (setq bas-val (oc-dp-read-attr ent bas-attr))
 
-          (setq integ-attr (strcat "OC_INTEG_DP_" (itoa dp-index)))
+          ;; Integrationsart: in den Datenpunktbloecken heisst das Attribut
+          ;; OC_INTEGRATIONSART_DP_n (siehe Erstellliste, Spalte 32).
+          ;; OC_INTEG_DP_n bleibt als Fallback fuer aeltere Blockstaende drin -
+          ;; in der GA-FL-Vorlage traegt die Spalte diesen kurzen Namen.
+          (setq integ-attr (strcat "OC_INTEGRATIONSART_DP_" (itoa dp-index)))
           (setq integ-val (oc-dp-read-attr ent integ-attr))
+          (if (or (not integ-val) (= integ-val ""))
+            (setq integ-val (oc-dp-read-attr ent (strcat "OC_INTEG_DP_" (itoa dp-index))))
+          )
 
           ;; Kommentar aus CAD-Block
           (setq komm-attr (strcat "OC_KOMMENTAR_DP_" (itoa dp-index)))
