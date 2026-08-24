@@ -159,8 +159,8 @@ void OpenCirtTab::setupUi() {
     
     // --- Enable Checkbox + Status ---
     auto* topLayout = new QHBoxLayout();
-    m_enableCheck = new QCheckBox("OpenCirt-Funktionen aktivieren");
-    m_enableCheck->setToolTip("Aktiviert die OpenCirt GA-Automatisierungsfunktionen");
+    m_enableCheck = new QCheckBox("openCirt-Funktionen aktivieren");
+    m_enableCheck->setToolTip("Aktiviert die openCirt GA-Automatisierungsfunktionen");
     topLayout->addWidget(m_enableCheck);
     
     m_statusLabel = new QLabel("Kein Projekt geladen");
@@ -170,7 +170,7 @@ void OpenCirtTab::setupUi() {
     mainLayout->addLayout(topLayout);
     
     // --- Function Buttons ---
-    auto* buttonGroup = new QGroupBox("OpenCirt Funktionen");
+    auto* buttonGroup = new QGroupBox("openCirt Funktionen");
     auto* buttonLayout = new QVBoxLayout(buttonGroup);
     
     // Helper lambda for button creation with description
@@ -284,7 +284,7 @@ void OpenCirtTab::onEnableToggled(bool enabled) {
         m_statusLabel->setText("Bitte Projektordner im General-Tab angeben");
         Theming::setRole(m_statusLabel, Theming::Role::Warning);
     } else {
-        m_statusLabel->setText("OpenCirt deaktiviert");
+        m_statusLabel->setText("openCirt deaktiviert");
         Theming::setRole(m_statusLabel, Theming::Role::MutedItalic);
     }
 }
@@ -2014,19 +2014,58 @@ QString OpenCirtTab::folderDisplayName(const QString& folderName) {
     return folderName;
 }
 
-QString OpenCirtTab::findDeckblattVorlage() {
-    // Find OC_VORLAGE_DIN_A2_*.dwg ignoring version number
-    QString vorlagenDir = projectPath(OpenCirtConfig::VORLAGEN_DIR);
-    QDir dir(vorlagenDir);
-    QStringList filters;
-    filters << "OC_VORLAGE_DIN_A2*.dwg";
-    QStringList matches = dir.entryList(filters, QDir::Files);
-    if (!matches.isEmpty()) {
-        QString path = vorlagenDir + "/" + matches.first();
-        path.replace("\\", "/");
-        return path;
+namespace {
+
+/// Extract the trailing version number: "..._V13.dwg" -> 13, "..._V_5.dwg" -> 5.
+/// Returns -1 when the name carries no version.
+int vorlagenVersion(const QString& fileName) {
+    static const QRegularExpression re("_V_?(\\d+)\\.dwg$",
+                                       QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatch m = re.match(fileName);
+    return m.hasMatch() ? m.captured(1).toInt() : -1;
+}
+
+/// Newest template matching pattern, skipping names that contain an exclude token.
+/// Picks by version number, not alphabetically - "V13" must beat "V12".
+QString newestVorlage(const QString& vorlagenDir, const QString& pattern,
+                      const QStringList& excludeTokens = QStringList()) {
+    const QStringList matches =
+        QDir(vorlagenDir).entryList(QStringList() << pattern, QDir::Files);
+
+    QString best;
+    int bestVersion = -2;
+    for (const QString& candidate : matches) {
+        bool excluded = false;
+        for (const QString& token : excludeTokens) {
+            if (candidate.contains(token, Qt::CaseInsensitive)) {
+                excluded = true;
+                break;
+            }
+        }
+        if (excluded) continue;
+
+        const int version = vorlagenVersion(candidate);
+        if (version > bestVersion) {
+            bestVersion = version;
+            best = candidate;
+        }
     }
-    return QString();
+
+    if (best.isEmpty()) return QString();
+
+    QString path = vorlagenDir + "/" + best;
+    path.replace("\\", "/");
+    return path;
+}
+
+} // namespace
+
+QString OpenCirtTab::findDeckblattVorlage() {
+    // Highest OC_VORLAGE_DIN_A2_V<n>.dwg. The Inhaltsverzeichnis sheet shares the
+    // OC_VORLAGE_DIN_A2 prefix and must not be picked up here.
+    return newestVorlage(projectPath(OpenCirtConfig::VORLAGEN_DIR),
+                         "OC_VORLAGE_DIN_A2*.dwg",
+                         QStringList() << "INHALTSVERZEICHNIS");
 }
 
 int OpenCirtTab::cleanupDeckblaetter() {
@@ -3928,19 +3967,11 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
 // Forward declaration (defined below near DSD generation)
 static QString readZeichnungsnummer(const QString& dwgPath);
 
-QString OpenCirtTab::findInhaltBlockVorlage() {
-    // Find OC_VORLAGE_EINTRAG_INHALT_DIN_A2*.dwg ignoring version
-    QString vorlagenDir = projectPath(OpenCirtConfig::VORLAGEN_DIR);
-    QDir dir(vorlagenDir);
-    QStringList filters;
-    filters << "OC_VORLAGE_EINTRAG_INHALT_DIN_A2*.dwg";
-    QStringList matches = dir.entryList(filters, QDir::Files);
-    if (!matches.isEmpty()) {
-        QString path = vorlagenDir + "/" + matches.first();
-        path.replace("\\", "/");
-        return path;
-    }
-    return QString();
+QString OpenCirtTab::findInhaltVorlage() {
+    // Complete DIN-A2 sheet: frame, Plankopf and the 22-row entry block already
+    // placed. Nothing gets inserted at generation time, only filled.
+    return newestVorlage(projectPath(OpenCirtConfig::VORLAGEN_DIR),
+                         "OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS*.dwg");
 }
 
 int OpenCirtTab::cleanupInhalt() {
@@ -4068,180 +4099,136 @@ QVector<OpenCirtTab::TocEntry> OpenCirtTab::buildTocEntries(
 /**
  * @brief Generate SCR to create Inhaltsverzeichnis DWG pages.
  *
- * For each page: copy DIN-A2 template, thaw Inhalt layers, freeze
- * Trennlinien layers, INSERT block rows at 15mm intervals from
- * (31,384,0) downward, set attributes via LISP.
+ * The template is a complete DIN-A2 sheet that already carries the 22-row
+ * entry block in its final position, so no INSERT and no geometry maths are
+ * needed. Per page: copy the template, open it, write the row attributes,
+ * set the Plankopf master data, save and close.
+ *
+ * Row attributes are addressed by tag: OC_INHALT_<FIELD>_<NN>, NN = 01..22.
+ * Rows left over on the last page keep the template's empty attributes.
  */
 QString OpenCirtTab::generateInhaltScr(
     const QVector<TocEntry>& entries, int tocPageCount)
 {
     QString scr;
-    
-    QString vorlage = findDeckblattVorlage();  // Same DIN-A2 template
+
+    QString vorlage = findInhaltVorlage();
     if (vorlage.isEmpty()) {
-        logError("Inhaltsverzeichnis: DIN-A2 Vorlage nicht gefunden");
+        logError("Inhaltsverzeichnis: Vorlage OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS*.dwg "
+                 "nicht im Vorlagenordner gefunden");
         return scr;
     }
-    
-    QString blockVorlage = findInhaltBlockVorlage();
-    if (blockVorlage.isEmpty()) {
-        logError("Inhaltsverzeichnis: Eintrags-Blockvorlage nicht gefunden");
-        return scr;
-    }
-    
+
     QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
     drawingsDir.replace("\\", "/");
 
     // Plankopf-Stammdaten sicherstellen. Die Inhaltsseiten werden frisch aus der
-    // DIN-A2-Vorlage kopiert; ohne diesen Schritt bliebe im Plankopf der
-    // Vorlagenstand stehen (AG/AN/PR leer bzw. Platzhalter).
+    // Vorlage kopiert; ohne diesen Schritt bliebe im Plankopf der Vorlagenstand
+    // stehen (AG/AN/PR leer bzw. Platzhalter).
     ensurePlankopfCsvLoaded();
     QString plankopfSnippet = m_plankopfCsvData.isEmpty()
                               ? QString()
                               : generateSetPlankopfSnippet(m_plankopfCsvData);
 
-    static const int MAX_ROWS_PER_PAGE = 21;
-    static const double START_Y = 384.0;
-    static const double ROW_HEIGHT = 15.0;
-    static const double INSERT_X = 31.0;
-    
     int entryIdx = 0;
-    
+
     for (int page = 1; page <= tocPageCount; ++page) {
         QString targetName = QString("0000 Projekt_Inhalt_%1.dwg")
                              .arg(page, 2, 10, QChar('0'));
         QString targetPath = drawingsDir + "/" + targetName;
-        
+
         scr += QString("; --- Inhaltsverzeichnis Seite %1/%2 ---\n")
                .arg(page).arg(tocPageCount);
-        
+
         // 1. Copy template
         scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
                .arg(vorlage, targetPath);
-        
+
         // 2. Open
         scr += QString("_.OPEN \"%1\"\n").arg(targetPath);
-        
-        // 3. Layer management: thaw Inhalt layers, freeze Trennlinien + Deckblatt
-        // Direct VLA property manipulation - reliable in SCR context
-        scr += "(progn\n"
-               "  (setq layers (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))))\n"
-               "  (foreach ln '(\"GA-Inhaltsverzeichnis-Beschriftung\"\n"
-               "                \"GA-Inhaltsverzeichnis-Daten\")\n"
-               "    (if (tblsearch \"LAYER\" ln)\n"
-               "      (progn\n"
-               "        (setq lo (vla-item layers ln))\n"
-               "        (vla-put-Freeze lo :vlax-false)\n"
-               "        (vla-put-LayerOn lo :vlax-true)\n"
-               "      )\n"
-               "    )\n"
-               "  )\n"
-               "  (foreach ln '(\"GA-Trennlinie-BAS\" \"GA-Trennlinie-LVB\"\n"
-               "                \"GA-Trennlinie-Regeldiagramme\" \"GA-Trennlinie-Regelstruktur\"\n"
-               "                \"GA-Deckblatt\" \"GA-Konstruktionslinie\"\n"
-               "                \"GA-MBE-Grafik\" \"GA-Inhaltsverzeichnis-Rahmen\")\n"
-               "    (if (tblsearch \"LAYER\" ln)\n"
-               "      (progn\n"
-               "        (setq lo (vla-item layers ln))\n"
-               "        (vla-put-Freeze lo :vlax-true)\n"
-               "      )\n"
-               "    )\n"
-               "  )\n"
-               "  (princ)\n"
-               ")\n";
-        
-        // 4. Set active layer + suppress attribute prompts during INSERT
-        scr += "(progn (command \"_.LAYER\" \"S\" \"GA-Inhaltsverzeichnis-Daten\" \"\")(princ))\n";
-        scr += "(progn (setvar \"ATTREQ\" 0)(princ))\n";
-        scr += "(progn (setvar \"ATTDIA\" 0)(princ))\n";
-        
-        // 4b. Pre-load block definition: insert+delete dummy to avoid
-        // BricsCAD first-external-INSERT offset issues (Units prompt etc.)
-        scr += QString(
-            "(progn\n"
-            "  (setvar \"INSUNITS\" 0)\n"
-            "  (setvar \"INSUNITSDEFSOURCE\" 0)\n"
-            "  (setvar \"INSUNITSDEFTARGET\" 0)\n"
-            "  (command \"_.INSERT\" \"%1\" \"0,0,0\" \"1\" \"1\" \"0\")\n"
-            "  (command \"_.ERASE\" (entlast) \"\")\n"
-            "  (princ)\n"
-            ")\n"
-        ).arg(blockVorlage);
-        
-        // 5. Insert rows for this page
-        int rowsThisPage = qMin(MAX_ROWS_PER_PAGE, entries.size() - entryIdx);
-        
+
+        // 3. Collect this page's tag/value pairs
+        int rowsThisPage = qMin(OpenCirtConfig::INHALT_ROWS_PER_PAGE, entries.size() - entryIdx);
+        QStringList pairs;
+
         for (int row = 0; row < rowsThisPage && entryIdx < entries.size(); ++row, ++entryIdx) {
             const TocEntry& e = entries[entryIdx];
-            double yPos = START_Y - (row * ROW_HEIGHT);
-            
-            // INSERT block (scale 1, rotation 0)
-            // Multi-line format for SCR robustness with long paths
-            scr += QString("_.INSERT \"%1\"\n").arg(blockVorlage);
-            scr += QString("%1,%2,0\n")
-                   .arg(INSERT_X, 0, 'f', 1)
-                   .arg(yPos, 0, 'f', 1);
-            scr += "1\n1\n0\n";
-            
-            // Set attributes via LISP on the last inserted entity
-            // Build attribute value pairs
-            QString lispSetAttrs;
-            lispSetAttrs += "(progn\n";
-            lispSetAttrs += "  (setq ent (entlast))\n";
-            lispSetAttrs += "  (setq obj (vlax-ename->vla-object ent))\n";
-            lispSetAttrs += "  (if (and (vlax-property-available-p obj 'HasAttributes)\n";
-            lispSetAttrs += "           (= (vla-get-HasAttributes obj) :vlax-true))\n";
-            lispSetAttrs += "    (foreach att (vlax-invoke obj 'GetAttributes)\n";
-            lispSetAttrs += "      (cond\n";
-            
-            if (!e.los.isEmpty()) {
-                QString escaped = e.los;
-                escaped.replace("\\", "\\\\");
-                escaped.replace("\"", "");
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_LOS\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(escaped);
-            }
-            if (!e.asp.isEmpty()) {
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_ASP\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(e.asp);
-            }
-            if (!e.gewerk.isEmpty()) {
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_GEWERK\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(e.gewerk);
-            }
-            if (!e.anlage.isEmpty()) {
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_ANLAGE\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(e.anlage);
-            }
-            if (!e.zeichnungsNr.isEmpty()) {
-                QString escaped = e.zeichnungsNr;
-                escaped.replace("\\", "\\\\");
-                escaped.replace("\"", "");
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_ZEICHNUNGSNUMMER\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(escaped);
-            }
-            if (e.seite > 0) {
-                lispSetAttrs += QString("        ((= (strcase (vla-get-TagString att)) \"OC_INHALT_SEITE\")\n"
-                                        "         (vla-put-TextString att \"%1\"))\n").arg(e.seite);
-            }
-            
-            lispSetAttrs += "      )\n";  // close cond
-            lispSetAttrs += "    )\n";    // close foreach
-            lispSetAttrs += "  )\n";      // close if
-            lispSetAttrs += "  (princ)\n";
-            lispSetAttrs += ")\n";
-            
-            scr += lispSetAttrs;
-        }
-        
-        // 6. Restore attribute settings
-        scr += "(progn (setvar \"ATTREQ\" 1)(princ))\n";
-        scr += "(progn (setvar \"ATTDIA\" 1)(princ))\n";
+            QString suffix = QString("_%1").arg(row + 1, 2, 10, QChar('0'));
 
-        // 7. Plankopf-Stammdaten aus CSV (AG, AN, PR, ERSTELLER ...)
+            auto addPair = [&pairs, &suffix](const QString& field, const QString& value) {
+                if (value.isEmpty()) return;
+                QString escaped = value;
+                escaped.replace("\\", "\\\\");
+                escaped.replace("\"", "");
+                pairs << QString("    (\"OC_INHALT_%1%2\" . \"%3\")")
+                         .arg(field, suffix, escaped);
+            };
+
+            addPair("LOS", e.los);
+            addPair("ASP", e.asp);
+            addPair("GEWERK", e.gewerk);
+            addPair("ANLAGE", e.anlage);
+            addPair("ZEICHNUNGSNUMMER", e.zeichnungsNr);
+            if (e.seite > 0)
+                addPair("SEITE", QString::number(e.seite));
+        }
+
+        // 4. Write the values into the entry block already present in the sheet.
+        //    The block is matched by wildcard, so a later _V_6 needs no code change.
+        if (!pairs.isEmpty()) {
+            scr += "(progn\n";
+            scr += "  (setq oc_vals '(\n";
+            scr += pairs.join("\n") + "\n";
+            scr += "  ))\n";
+            scr += "  (setq oc_hits 0)\n";
+            scr += "  (setq oc_ss (ssget \"_X\" '((0 . \"INSERT\"))))\n";
+            scr += "  (if oc_ss\n";
+            scr += "    (progn\n";
+            scr += "      (setq oc_i 0)\n";
+            scr += "      (while (< oc_i (sslength oc_ss))\n";
+            scr += "        (setq oc_obj (vlax-ename->vla-object (ssname oc_ss oc_i)))\n";
+            scr += "        (setq oc_name (strcase\n";
+            scr += "          (if (vlax-property-available-p oc_obj 'EffectiveName)\n";
+            scr += "            (vla-get-EffectiveName oc_obj)\n";
+            scr += "            (vla-get-Name oc_obj))))\n";
+            scr += QString("        (if (and (wcmatch oc_name \"%1\")\n")
+                   .arg(OpenCirtConfig::INHALT_BLOCK_PATTERN);
+            scr += "                 (vlax-property-available-p oc_obj 'HasAttributes)\n";
+            scr += "                 (= (vla-get-HasAttributes oc_obj) :vlax-true))\n";
+            scr += "          (foreach oc_att (vlax-invoke oc_obj 'GetAttributes)\n";
+            scr += "            (setq oc_p (assoc (strcase (vla-get-TagString oc_att)) oc_vals))\n";
+            scr += "            (if oc_p\n";
+            scr += "              (progn (vla-put-TextString oc_att (cdr oc_p))\n";
+            scr += "                     (setq oc_hits (1+ oc_hits))))\n";
+            scr += "          )\n";
+            scr += "        )\n";
+            scr += "        (setq oc_i (1+ oc_i))\n";
+            scr += "      )\n";
+            scr += "    )\n";
+            scr += "  )\n";
+            scr += "  (if (= oc_hits 0)\n";
+            scr += QString("    (princ \"\\nWARNUNG openCirt: Eintragsblock %1 nicht gefunden "
+                           "oder Attribut-Tags ohne Zeilenindex.\"))\n")
+                   .arg(OpenCirtConfig::INHALT_BLOCK_PATTERN);
+            scr += "  (princ)\n";
+            scr += ")\n";
+        }
+
+        // 5. Plankopf-Stammdaten aus CSV (AG, AN, PR, ERSTELLER ...)
         scr += plankopfSnippet;
 
-        // 8. Save and close
+        // 6. Plankopf-Zeichnungsnummer. Bewusst nach dem CSV-Snippet, damit dieser
+        //    Wert gewinnt, falls die plankopfdaten.csv selbst ZEICHNUNGSNUMMER fuehrt.
+        //    Die Eintragszeilen nutzen OC_INHALT_ZEICHNUNGSNUMMER_<NN> und bleiben
+        //    davon unberuehrt.
+        QMap<QString, QString> inhaltPlankopf;
+        inhaltPlankopf["ZEICHNUNGSNUMMER"] =
+            (tocPageCount > 1)
+            ? QString("Inhaltsverzeichnis Seite %1 von %2").arg(page).arg(tocPageCount)
+            : QString("Inhaltsverzeichnis");
+        scr += generateSetPlankopfSnippet(inhaltPlankopf);
+
+        // 7. Save and close
         scr += lispSave();
         scr += lispClose();
     }
@@ -4618,7 +4605,7 @@ void OpenCirtTab::onPublishPdf() {
     // then calculate tocPageCount from entry count.
     QVector<TocEntry> prelimEntries = buildTocEntries(orderedDwgs, 0);
     
-    static const int MAX_ROWS_PER_PAGE = 21;
+    static const int MAX_ROWS_PER_PAGE = OpenCirtConfig::INHALT_ROWS_PER_PAGE;
     int tocPageCount = 0;
     if (!prelimEntries.isEmpty()) {
         tocPageCount = (prelimEntries.size() + MAX_ROWS_PER_PAGE - 1) / MAX_ROWS_PER_PAGE;

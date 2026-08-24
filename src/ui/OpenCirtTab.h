@@ -116,6 +116,11 @@ struct OpenCirtConfig {
     // GA-FL Block name in template
     static constexpr const char* GA_FL_BLOCK_NAME = "VDI3814_GA_FL_V_1_0";
     
+    // Inhaltsverzeichnis: rows the entry block brings along, and the wildcard
+    // used to locate that block inside the sheet template (version-agnostic).
+    static constexpr int INHALT_ROWS_PER_PAGE = 22;
+    static constexpr const char* INHALT_BLOCK_PATTERN = "OC_VORLAGE_EINTRAG_INHALT_DIN_A2*";
+    
     // Max datapoints per sheet
     static constexpr int MAX_DP_FIRST_SHEET = 25;  // Zeilen 1-25, kein Uebertrag
     static constexpr int MAX_DP_FOLLOW_SHEET = 24;  // Zeile 1 = Uebertrag, Zeilen 2-25 = DPs
@@ -319,8 +324,8 @@ private:
     /// Generate DSD file for PUBLISH command
     QString generateDsdFile(const QStringList& orderedDwgs);
     
-    /// Find the Inhalt block template DWG
-    QString findInhaltBlockVorlage();
+    /// Find the Inhaltsverzeichnis sheet template DWG (22 rows preplaced)
+    QString findInhaltVorlage();
     
     /// Delete existing Inhalt DWG files
     int cleanupInhalt();

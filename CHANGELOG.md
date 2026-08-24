@@ -7,6 +7,28 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+## [1.4.0] – 2026-08-24
+
+### Changed
+- **Das Inhaltsverzeichnis entsteht aus einer vollständigen Blattvorlage.** Bisher wurde je Zeile ein einzeiliger Block aus `OC_VORLAGE_EINTRAG_INHALT_DIN_A2*.dwg` eingefügt und über feste Koordinaten positioniert (Start 31/384, Zeilenhöhe 15 mm) – 21 externe `INSERT`-Vorgänge je Blatt, jeder eine Gelegenheit zum Verrutschen. Jetzt trägt `OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg` den Eintragsblock mit allen Zeilen bereits an seiner endgültigen Stelle. Die Erzeugung kopiert das Blatt, füllt die Attribute und speichert. Entfallen sind damit die INSERT-Schleife, der Dummy-Insert zum Vorladen der Blockdefinition, das Umschalten von `ATTREQ`/`ATTDIA` und die Layersteuerung, weil die Vorlage die Layer bereits richtig führt
+- Zeilen werden über ihren Tag angesprochen (`OC_INHALT_<FELD>_01` bis `_22`), der Block im Blatt über das Muster `OC_VORLAGE_EINTRAG_INHALT_DIN_A2*` gesucht. Eine künftige Blockversion erfordert daher keine Codeänderung. Findet sich kein passender Block oder tragen die Attribute keinen Zeilenindex, meldet das Skript das in der Konsole, statt still ein leeres Blatt zu erzeugen
+- 22 statt 21 Einträge je Blatt, gepflegt in `OpenCirtConfig::INHALT_ROWS_PER_PAGE` statt zweimal als lokale Konstante. **Damit verschieben sich die Seitenzahlen gegenüber älteren PDFs desselben Projekts**
+- Der Plankopf der Inhaltsseiten führt jetzt eine Zeichnungsnummer: `Inhaltsverzeichnis Seite 1 von 3`, bei einseitigem Verzeichnis nur `Inhaltsverzeichnis`. Das Feld blieb bisher leer
+- Beschriftungen im Plugin auf die Schreibweise `openCirt` vereinheitlicht: Reitername, Checkbox, Schaltflächengruppe, Statuszeile, Tooltip und `setOrganizationName`. Klassennamen bleiben unverändert
+
+### Fixed
+- **Vorlagen wurden alphabetisch statt nach Version gewählt.** `findDeckblattVorlage()` und der Eintrags-Finder nahmen jeweils den ersten Treffer ihres Dateimusters. Lagen `V12` und `V13` nebeneinander, gewann `V12` – entgegen der Konvention, dass die höchste Nummer der aktuelle Stand ist. Zusätzlich hätte die neue Inhaltsvorlage das Muster `OC_VORLAGE_DIN_A2*` mit abgedeckt und wäre fälschlich als Deckblattvorlage gezogen worden. Neu wählt `newestVorlage()` nach der Versionsnummer und schließt die Inhaltsvorlage beim Deckblatt aus
+- Der Über-Dialog meldete fest verdrahtet `v3.0.0` und wich damit von der hier geführten Zählung ab. Die Version kommt jetzt aus `project(... VERSION ...)` und ist an einer Stelle gepflegt
+
+### Added
+- `OPENCIRT_VERSION` als Compilerdefinition aus der CMake-Projektversion
+
+### Removed
+- `findInhaltBlockVorlage()` samt der einzeiligen Eintragsvorlage `OC_VORLAGE_EINTRAG_INHALT_DIN_A2_V_4.dwg`, die in keinem Projekt mehr gebraucht wird
+
+### Migration
+- Jedes Projekt braucht `OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg` in `04- Vorlagen`. Fehlt sie, bricht die Erzeugung mit einer Meldung ab, statt ein falsches Blatt zu bauen
+
 ## [1.3.1] – 2026-08-23
 
 ### Changed

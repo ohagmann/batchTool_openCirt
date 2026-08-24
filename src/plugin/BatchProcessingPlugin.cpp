@@ -46,7 +46,7 @@ AcRx::AppRetCode acrxEntryPoint(AcRx::AppMsgCode msg, void* pAppId)
                 static char* argv[] = { (char*)"BatchProcessing", nullptr };
                 g_qApp = new QApplication(argc, argv);
                 g_qApp->setApplicationName("BatchProcessing");
-                g_qApp->setOrganizationName("OpenCirt");
+                g_qApp->setOrganizationName("openCirt");
             }
             
             // Registriere Commands

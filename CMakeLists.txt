@@ -1,5 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
-project(BricsCAD_BatchProcessing_Windows)
+
+# ============================================================================
+# Version
+# ============================================================================
+# Einzige Quelle ist der oberste nummerierte Abschnitt in CHANGELOG.md.
+# "## [Unreleased]" wird uebersprungen, weil das Muster Ziffern verlangt.
+# CMAKE_CONFIGURE_DEPENDS sorgt dafuer, dass eine Aenderung am CHANGELOG die
+# Konfiguration neu anstoesst - sonst bliebe die einkompilierte Version stehen.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md" _oc_changelog)
+string(REGEX MATCH "\n## \\[([0-9]+\\.[0-9]+\\.[0-9]+)\\]" _oc_unused "${_oc_changelog}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR "Keine Version in CHANGELOG.md gefunden. Erwartet wird eine Zeile der Form '## [1.4.0] - JJJJ-MM-TT'.")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md")
+
+project(BricsCAD_BatchProcessing_Windows VERSION ${CMAKE_MATCH_1})
+message(STATUS "openCirt Version (aus CHANGELOG.md): ${PROJECT_VERSION}")
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 17)
@@ -191,6 +208,7 @@ add_library(batch_processing_plugin SHARED
 # Compiler Definitions
 # ============================================================================
 target_compile_definitions(batch_processing_plugin PRIVATE
+    OPENCIRT_VERSION="${PROJECT_VERSION}"
     _BRXEXPORT
     __BRXTARGET
     _UNICODE

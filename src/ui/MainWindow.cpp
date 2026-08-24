@@ -624,7 +624,7 @@ void MainWindow::createCentralWidget() {
     m_tabWidget->addTab(createAttributeTab(), "Attribute Replacement");
     m_tabWidget->addTab(createLayerTab(), "Layer Management");
     m_tabWidget->addTab(createLispTab(), "LISP Scripts");
-    m_tabWidget->addTab(createOpenCirtTab(), "OpenCirt");
+    m_tabWidget->addTab(createOpenCirtTab(), "openCirt");
     
     // Log area
     QGroupBox* logGroup = new QGroupBox("Processing Log");
@@ -2482,12 +2482,17 @@ void MainWindow::onExportLog() {
 }
 
 void MainWindow::showAbout() {
+    // OPENCIRT_VERSION kommt aus project(... VERSION ...) in der CMakeLists.txt.
+    // Der Fallback greift nur, wenn ausserhalb von CMake uebersetzt wird.
+#ifndef OPENCIRT_VERSION
+#define OPENCIRT_VERSION "unbekannt"
+#endif
     QMessageBox::about(this, "About BatchProcessing Plugin",
         "BricsCAD Batch Processing Plugin\n"
-        "v3.0.0\n\n"
+        "v" OPENCIRT_VERSION "\n\n"
         "Processing Modes:\n"
         "  Text/Attribute/Layer: BRX SDK (in-process)\n"
-        "  LISP Scripts: _.SCRIPT (in-process, v5.1)\n\n"
+        "  LISP Scripts: _.SCRIPT (in-process)\n\n"
         "Built with Qt6 & BRX SDK for BricsCAD V26");
 }
 
