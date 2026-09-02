@@ -7,6 +7,12 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+### Changed
+- **GA-FL-Befüllung ist etwa 14-mal schneller.** `FillGaFl.lsp` v1.4 lief die ATTRIB-Kette des GA-FL-Blocks (rund 1.600 Attribute) bisher bei jedem einzelnen Lese- und Schreibzugriff komplett ab und rief nach jedem geschriebenen Attribut `entupd` – pro Blatt mit 25 Datenpunkten knapp 5 Mio. `entget`-Aufrufe. Jetzt wird die Kette pro Block einmal als `(TAG . ename)`-Liste gecacht, Zugriffe gehen über den Cache, und `entupd` erfolgt einmal pro Block am Ende. Gemessen an einem Projekt mit 263 Blättern und 2.136 Datenpunkten: GA-FL-Phase 29:41 min → 2:09 min, Gesamtlauf 43 → 14 min. Ergebnis funktional identisch – Logvergleich beider Läufe ohne Abweichung, zusätzlich 1.064 Attributwerte an vier Blättern einer RLT-Anlage gegen eine unabhängige Nachrechnung aus CSV und GA_FL_VORLAGE geprüft
+
+### Added
+- **Kommentare in der `BAS.csv`.** `GenBas.lsp` v1.3 wertet nur noch die erste Spalte einer Zeile aus (alles bis zum ersten `;`) und ignoriert Zeilen, die mit `#` beginnen. Bisher war die Datei trotz Endung keine CSV – die komplette Zeile galt als Segment, ein Kommentar in Spalte 2 wurde zum ungefundenen Attributnamen und erzeugte ein leeres Segment. Nebeneffekt: Die Datei überlebt jetzt das Speichern aus Excel/LibreOffice mit `;`-Trennung. Einschränkung: Ein statischer Text darf selbst kein `;` enthalten. Doku in BEDIENUNGSANLEITUNG 7.1/7.2 ergänzt
+
 ## [1.4.0] – 2026-08-24
 
 ### Changed

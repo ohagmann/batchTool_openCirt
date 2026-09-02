@@ -1,6 +1,11 @@
 ;;; =====================================================================
 ;;; FillGaFl.lsp - GA-Funktionsliste befüllen
 ;;; =====================================================================
+;;; Version: 1.4
+;;;   - Performance: ATTRIB-Kette pro Block einmal gecacht (TAG . ename),
+;;;     Lese-/Schreibzugriffe gehen ueber den Cache statt die Kette jedes
+;;;     Mal komplett abzulaufen; entupd einmal pro Block am Ende statt
+;;;     pro Attribut. Funktional identisch zu v1.3.
 ;;; Version: 1.3
 ;;;   - Logging: oc-log schreibt auf Konsole UND in Logdatei (fillgafl_log.txt)
 ;;;   - Uebertrag auf Folgeblaettern (Zeile 1): kumulierte Spaltensummen
@@ -62,20 +67,83 @@
 )
 
 ;;; =====================================================================
-;;; HILFSFUNKTIONEN
+;;; ATTRIBUT-CACHE (v1.4)
 ;;; =====================================================================
+;;; Pro Block wird die ATTRIB-Kette genau einmal abgelaufen und als Liste
+;;; von (TAG . ename) gehalten (TAG in Grossbuchstaben, Reihenfolge wie in
+;;; der Kette). Alle Zugriffe laufen ueber diesen Cache. Blocks, in die
+;;; geschrieben wurde, werden gemerkt und am Ende einmal per entupd
+;;; aktualisiert.
 
-;; Liest Attributwert aus einem Block (case-insensitive)
-(defun oc-fl-read-attr (block-ent attr-name / next-ent attr-data found-val)
-  (setq found-val nil)
+(if (not (boundp '*oc-fl-attr-cache*)) (setq *oc-fl-attr-cache* nil))
+(if (not (boundp '*oc-fl-dirty-blocks*)) (setq *oc-fl-dirty-blocks* nil))
+
+;; Cache fuer einen Block aufbauen (einmaliger Kettendurchlauf)
+(defun oc-fl-build-attr-cache (block-ent / next-ent attr-data cache)
+  (setq cache '())
   (setq next-ent (entnext block-ent))
   (while (and next-ent
               (setq attr-data (entget next-ent))
               (= (cdr (assoc 0 attr-data)) "ATTRIB"))
-    (if (= (strcase (cdr (assoc 2 attr-data))) (strcase attr-name))
-      (setq found-val (cdr (assoc 1 attr-data)))
-    )
+    (setq cache (cons (cons (strcase (cdr (assoc 2 attr-data))) next-ent) cache))
     (setq next-ent (entnext next-ent))
+  )
+  (reverse cache)
+)
+
+;; Cache fuer einen Block holen, bei Bedarf aufbauen
+(defun oc-fl-get-attr-cache (block-ent / pair cache)
+  (setq pair (assoc block-ent *oc-fl-attr-cache*))
+  (if pair
+    (cdr pair)
+    (progn
+      (setq cache (oc-fl-build-attr-cache block-ent))
+      (setq *oc-fl-attr-cache* (cons (cons block-ent cache) *oc-fl-attr-cache*))
+      cache
+    )
+  )
+)
+
+;; Alle ATTRIB-enames eines Blocks mit gegebenem Tag (case-insensitive,
+;; Reihenfolge wie in der Kette; auch doppelte Tags werden alle geliefert)
+(defun oc-fl-attr-enames (block-ent attr-name / cache tag rest pair result)
+  (setq cache (oc-fl-get-attr-cache block-ent))
+  (setq tag (strcase attr-name))
+  (setq result '())
+  (setq rest cache)
+  (while (setq pair (assoc tag rest))
+    (setq result (cons (cdr pair) result))
+    (setq rest (cdr (member pair rest)))
+  )
+  (reverse result)
+)
+
+;; Block als geaendert merken (fuer entupd am Ende)
+(defun oc-fl-mark-dirty (block-ent)
+  (if (not (member block-ent *oc-fl-dirty-blocks*))
+    (setq *oc-fl-dirty-blocks* (cons block-ent *oc-fl-dirty-blocks*))
+  )
+)
+
+;; Alle geaenderten Blocks einmal aktualisieren, Cache und Merkliste leeren
+(defun oc-fl-flush-updates ()
+  (foreach b *oc-fl-dirty-blocks*
+    (entupd b)
+  )
+  (setq *oc-fl-dirty-blocks* nil)
+  (setq *oc-fl-attr-cache* nil)
+)
+
+;;; =====================================================================
+;;; HILFSFUNKTIONEN
+;;; =====================================================================
+
+;; Liest Attributwert aus einem Block (case-insensitive)
+;; Bei mehrfach vorhandenem Tag: letzter Treffer (wie v1.3)
+(defun oc-fl-read-attr (block-ent attr-name / found-val)
+  (setq found-val nil)
+  (foreach en (oc-fl-attr-enames block-ent attr-name)
+    (setq found-val (cdr (assoc 1 (entget en))))
   )
   found-val
 )
@@ -145,23 +213,18 @@
 )
 
 ;; Schreibt Attributwert in einen Block (mit CP1252->UTF-8 Konvertierung)
-(defun oc-fl-write-attr (block-ent attr-name new-value / next-ent attr-data updated utf8-value)
+;; Bei mehrfach vorhandenem Tag werden alle beschrieben (wie v1.3).
+;; entupd erfolgt gesammelt am Ende (oc-fl-flush-updates).
+(defun oc-fl-write-attr (block-ent attr-name new-value / attr-data updated utf8-value)
   (setq updated 0)
   (setq utf8-value (oc-fl-fix-encoding new-value))
-  (setq next-ent (entnext block-ent))
-  (while (and next-ent
-              (setq attr-data (entget next-ent))
-              (= (cdr (assoc 0 attr-data)) "ATTRIB"))
-    (if (= (strcase (cdr (assoc 2 attr-data))) (strcase attr-name))
-      (progn
-        (setq attr-data (subst (cons 1 utf8-value) (assoc 1 attr-data) attr-data))
-        (entmod attr-data)
-        (entupd next-ent)
-        (setq updated (1+ updated))
-      )
-    )
-    (setq next-ent (entnext next-ent))
+  (foreach en (oc-fl-attr-enames block-ent attr-name)
+    (setq attr-data (entget en))
+    (setq attr-data (subst (cons 1 utf8-value) (assoc 1 attr-data) attr-data))
+    (entmod attr-data)
+    (setq updated (1+ updated))
   )
+  (if (> updated 0) (oc-fl-mark-dirty block-ent))
   updated
 )
 
@@ -497,6 +560,10 @@
                    kommentar-csv kommentar-ref kommentar-val)
 
   (oc-log "\n=== GA-FL Befuellung gestartet ===")
+
+  ;; Attribut-Cache und Merkliste fuer diesen Lauf zuruecksetzen
+  (setq *oc-fl-attr-cache* nil)
+  (setq *oc-fl-dirty-blocks* nil)
 
   ;; Fehlende-Referenzen-Liste initialisieren
   (if (not (boundp '*oc-missing-refs*))
@@ -887,6 +954,9 @@
   (oc-fl-write-carry-file csv-path sum-counts)
   (oc-log "\n  Summenwerte fuer Uebertrag gespeichert.")
 
+  ;; Geaenderte Blocks einmal aktualisieren (statt entupd pro Attribut)
+  (oc-fl-flush-updates)
+
   (oc-log (strcat "\n=== GA-FL Befuellung abgeschlossen: "
                  (itoa filled-count) " Datenpunkte in "
                  (itoa (length gafl-blocks)) " Block(e) ==="))
@@ -931,5 +1001,5 @@
   (princ)
 )
 
-(oc-log "\nFillGaFl.lsp geladen (v1.3)")
+(oc-log "\nFillGaFl.lsp geladen (v1.4)")
 (princ)

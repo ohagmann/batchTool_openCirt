@@ -1,7 +1,7 @@
 ;;; =====================================================================
 ;;; GenBas.lsp - BAS (Benutzeradressierungssystem) Generator
 ;;; =====================================================================
-;;; Version: 1.2 - Revert: Kein Quote-Stripping, OC_AKS_LOCK stattdessen
+;;; Version: 1.3 - Kommentare in BAS.csv: #-Zeilen und Spalten ab ; ignorieren
 ;;;
 ;;; Baut pro aktivem Datenpunkt einen BAS-String zusammen aus den
 ;;; Segmenten in BAS.csv und schreibt das Ergebnis in OC_BAS_DP_n.
@@ -11,6 +11,12 @@
 ;;;   "-"                  → Statischer Text (in Anführungszeichen)
 ;;;   OC_AKS               → Attributwert lesen
 ;;;   OC_FCODE_DP          → Endet mit _DP → wird zu OC_FCODE_DP_n
+;;;
+;;; Kommentare (ab v1.3):
+;;;   # Text               → Zeile beginnt mit # → komplett ignoriert
+;;;   OC_AKS;Kommentar     → nur erste Spalte (bis zum ersten ;) wird
+;;;                          ausgewertet, Rest ist Kommentar
+;;;   Einschränkung: ein statischer Text darf selbst kein ; enthalten
 ;;;
 ;;; Globale Variable (vom C++ Plugin gesetzt):
 ;;;   *oc-bas-csv-path*    → Pfad zur BAS.csv
@@ -95,7 +101,7 @@
 ;;; BAS.CSV PARSER
 ;;; =====================================================================
 
-(defun oc-parse-bas-csv (csv-path / file line segments seg trimmed)
+(defun oc-parse-bas-csv (csv-path / file line segments seg trimmed pos)
   (setq segments '())
   (if (not (findfile csv-path))
     (progn
@@ -108,6 +114,14 @@
         (progn
           (while (setq line (read-line file))
             (setq trimmed (vl-string-trim " \t\r" line))
+            ;; Kommentarzeile: beginnt mit # → komplett ignorieren
+            (if (and (> (strlen trimmed) 0) (= (substr trimmed 1 1) "#"))
+              (setq trimmed "")
+            )
+            ;; Nur erste Spalte auswerten: alles ab dem ersten ; ist Kommentar
+            (if (setq pos (vl-string-search ";" trimmed))
+              (setq trimmed (vl-string-trim " \t\r" (substr trimmed 1 pos)))
+            )
             (if (> (strlen trimmed) 0)
               (progn
                 ;; Prüfe ob statischer Text (in Anführungszeichen oder bare "-")
@@ -310,5 +324,5 @@
   (GenBas)
 )
 
-(princ "\nGenBas.lsp geladen (v1.0)")
+(princ "\nGenBas.lsp geladen (v1.3)")
 (princ)

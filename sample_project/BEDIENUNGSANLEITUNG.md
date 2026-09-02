@@ -291,6 +291,19 @@ OC_FCODE_DP        ← Endet mit _DP → wird pro Datenpunkt zu OC_FCODE_DP_1, _
 
 **Ergebnis-Beispiel:** `BSP-ASP01-RLT-TKA-1000-ZUV-01-FR_01`
 
+**Kommentare in der BAS.csv** (ab GenBas.lsp v1.3): Ausgewertet wird nur die erste Spalte einer Zeile, also alles bis zum ersten Semikolon. Was dahinter steht, ist Kommentar. Zeilen, die mit `#` beginnen, werden komplett ignoriert. Die Datei kann damit auch aus Excel/LibreOffice (deutsche Locale, Trennzeichen `;`) gespeichert werden, ohne den Aufbau zu stören.
+
+```csv
+# BAS-Aufbau Testprojekt
+"Testprojekt";Standortkennung (statisch)
+-;Trenner
+OC_AKS;AKS des Betriebsmittels
+-
+OC_FCODE_DP;Funktionscode je Datenpunkt
+```
+
+Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil die Zeile dort abgeschnitten würde.
+
 ### 7.2 Segment-Typen
 
 | Typ | Format | Beschreibung |
@@ -300,6 +313,8 @@ OC_FCODE_DP        ← Endet mit _DP → wird pro Datenpunkt zu OC_FCODE_DP_1, _
 | Plankopf-Attribut | `ASP`, `GEWERK`, etc. | Wert wird aus dem Plankopf gelesen |
 | Block-Attribut | `OC_AKS`, etc. | Wert wird aus dem Symbol-Block gelesen |
 | Datenpunkt-Attribut | `OC_FCODE_DP` | Endet mit `_DP` → wird zu `_DP_1`, `_DP_2`, ... pro Datenpunkt |
+| Kommentarzeile | `# Text` | Zeile wird komplett ignoriert |
+| Kommentar in Spalte 2 | `OC_AKS;Text` | Nur die erste Spalte (bis zum ersten `;`) wird ausgewertet |
 
 ### 7.3 Ausführung
 
