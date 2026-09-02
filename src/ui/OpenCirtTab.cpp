@@ -189,24 +189,54 @@ void OpenCirtTab::setupUi() {
     };
     
     // Reihenfolge nach Wichtigkeit im taeglichen Arbeitsablauf:
-    // Projekt erstellen und bereinigen zuerst, danach die Ausgaben.
+    // Projekt erstellen mit seinen Optionen, Trenner, Projekt bereinigen,
+    // Trenner, danach die Ausgaben.
+    auto addSeparator = [&]() {
+        buttonLayout->addSpacing(8);
+        auto* separator = new QFrame();
+        separator->setFrameShape(QFrame::HLine);
+        separator->setFrameShadow(QFrame::Sunken);
+        buttonLayout->addWidget(separator);
+        buttonLayout->addSpacing(4);
+    };
+
     m_btnFullProject = createButtonRow(
         "Projekt erstellen",
         "Alle Schritte in korrekter Reihenfolge");
     m_btnFullProject->setStyleSheet(
         "QPushButton { font-weight: bold; }");
 
+    // Optionen des Gesamtlaufs direkt unter dem Button, eingerueckt auf die
+    // Hoehe des Beschreibungstextes, damit die Zuordnung sichtbar ist.
+    auto addOptionRow = [&](QCheckBox* chk) {
+        auto* rowLayout = new QHBoxLayout();
+        rowLayout->addSpacing(220 + rowLayout->spacing());
+        rowLayout->addWidget(chk);
+        rowLayout->addStretch();
+        buttonLayout->addLayout(rowLayout);
+    };
+
+    m_chkIncludeBmk = new QCheckBox("BMK-Nummerierung einschliessen");
+    m_chkIncludeBmk->setChecked(true);
+    m_chkIncludeBmk->setToolTip(
+        "BMK-Nummerierung vor GA-FL-Generierung ausfuehren.\n"
+        "Steuerung pro DWG ueber Plankopf-Attribut FREITEXT_05.");
+    addOptionRow(m_chkIncludeBmk);
+
+    m_chkIncludeBas = new QCheckBox("BAS-Generierung einschliessen");
+    m_chkIncludeBas->setChecked(true);
+    m_chkIncludeBas->setToolTip(
+        "BAS-Generierung vor GA-FL-Generierung ausfuehren.\n"
+        "Setzt korrekte BMK-Nummerierung voraus.");
+    addOptionRow(m_chkIncludeBas);
+
+    addSeparator();
+
     m_btnBereinigen = createButtonRow(
         "Projekt bereinigen",
         "Temporaere Dateien und Backups loeschen");
 
-    // Trenner vor den Ausgabefunktionen
-    buttonLayout->addSpacing(8);
-    auto* separator = new QFrame();
-    separator->setFrameShape(QFrame::HLine);
-    separator->setFrameShadow(QFrame::Sunken);
-    buttonLayout->addWidget(separator);
-    buttonLayout->addSpacing(4);
+    addSeparator();
 
     m_btnPublish = createButtonRow(
         "PDF publizieren",
@@ -227,26 +257,6 @@ void OpenCirtTab::setupUi() {
         "Fuehler/Sensoren aus GA-FL-Daten in ODS-Vorlage exportieren");
 
     mainLayout->addWidget(buttonGroup);
-    
-    // --- Options for Full Project ---
-    auto* optionsGroup = new QGroupBox("Optionen (Gesamtlauf)");
-    auto* optionsLayout = new QVBoxLayout(optionsGroup);
-    
-    m_chkIncludeBmk = new QCheckBox("BMK-Nummerierung einschliessen");
-    m_chkIncludeBmk->setChecked(true);
-    m_chkIncludeBmk->setToolTip(
-        "BMK-Nummerierung vor GA-FL-Generierung ausfuehren.\n"
-        "Steuerung pro DWG ueber Plankopf-Attribut FREITEXT_05.");
-    optionsLayout->addWidget(m_chkIncludeBmk);
-    
-    m_chkIncludeBas = new QCheckBox("BAS-Generierung einschliessen");
-    m_chkIncludeBas->setChecked(true);
-    m_chkIncludeBas->setToolTip(
-        "BAS-Generierung vor GA-FL-Generierung ausfuehren.\n"
-        "Setzt korrekte BMK-Nummerierung voraus.");
-    optionsLayout->addWidget(m_chkIncludeBas);
-    
-    mainLayout->addWidget(optionsGroup);
     
     // --- Progress Bar ---
     m_progressBar = new QProgressBar();

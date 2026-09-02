@@ -7,7 +7,10 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+## [1.4.1] – 2026-09-02
+
 ### Changed
+- **Die Optionen des Gesamtlaufs stehen jetzt direkt unter „Projekt erstellen“.** Die beiden Haken „BMK-Nummerierung einschliessen“ und „BAS-Generierung einschliessen“ betreffen nur diesen einen Lauf, standen aber in einer eigenen Box „Optionen (Gesamtlauf)“ unterhalb aller Funktionen – räumlich getrennt von dem Button, den sie steuern. Sie sitzen nun eingerueckt unter dem Button, gefolgt von einem Trenner, „Projekt bereinigen“, einem weiteren Trenner und den drei Ausgabefunktionen. Die separate Optionen-Box entfällt; Verhalten und Voreinstellung der Haken sind unverändert
 - **GA-FL-Befüllung ist etwa 14-mal schneller.** `FillGaFl.lsp` v1.4 lief die ATTRIB-Kette des GA-FL-Blocks (rund 1.600 Attribute) bisher bei jedem einzelnen Lese- und Schreibzugriff komplett ab und rief nach jedem geschriebenen Attribut `entupd` – pro Blatt mit 25 Datenpunkten knapp 5 Mio. `entget`-Aufrufe. Jetzt wird die Kette pro Block einmal als `(TAG . ename)`-Liste gecacht, Zugriffe gehen über den Cache, und `entupd` erfolgt einmal pro Block am Ende. Gemessen an einem Projekt mit 263 Blättern und 2.136 Datenpunkten: GA-FL-Phase 29:41 min → 2:09 min, Gesamtlauf 43 → 14 min. Ergebnis funktional identisch – Logvergleich beider Läufe ohne Abweichung, zusätzlich 1.064 Attributwerte an vier Blättern einer RLT-Anlage gegen eine unabhängige Nachrechnung aus CSV und GA_FL_VORLAGE geprüft
 
 ### Added
