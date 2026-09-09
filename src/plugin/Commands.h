@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file Commands.h
  * @brief Command Declarations for Batch Processing Plugin
  */
@@ -15,6 +15,7 @@ void unregisterCommands();
 
 // Command implementations
 void batchProcessCommand();
+void phase3PrepareCommand();
 
 } // namespace Commands
 } // namespace BatchProcessing

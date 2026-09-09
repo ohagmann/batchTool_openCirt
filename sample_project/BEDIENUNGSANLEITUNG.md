@@ -1,4 +1,4 @@
-# openCirt – Bedienungsanleitung
+﻿# openCirt – Bedienungsanleitung
 
 **Version:** 1.0  
 **Stand:** März 2026  
@@ -326,7 +326,7 @@ Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil d
 
 ## 8. GA-Funktionslisten erstellen
 
-Die GA-FL-Erstellung ist der Kern von openCirt. Sie läuft in zwei Phasen:
+Die GA-FL-Erstellung ist der Kern von openCirt. Sie läuft in drei Phasen:
 
 ### 8.1 Phase 1: Datenextraktion
 
@@ -338,11 +338,18 @@ Die GA-FL-Erstellung ist der Kern von openCirt. Sie läuft in zwei Phasen:
 
 - Für jede Quell-DWG wird eine GA-FL-DWG erzeugt (Kopie von `OC_VORLAGE_GA_FL.dwg`).
 - Das LISP-Skript `FillGaFl.lsp` füllt die Blätter mit den extrahierten Daten.
-- Zusätzlich werden Summenblätter generiert (ASP-Summe, Los-Summe, Projekt-Summe).
+
+### 8.2a Phase 3: Summenblätter
+
+- Läuft automatisch, sobald das letzte GA-FL-Blatt gespeichert ist – ohne Zeitlimit, auch bei sehr großen Projekten.
+- Die Summenblätter (Gewerk-, ASP-, Los-, Projekt-Summe, Gewerke je Los) werden aus den **fertigen GA-FL-Blättern** aggregiert, nicht aus der Referenztabelle neu berechnet. Eine Handkorrektur in einem GA-FL-Blatt schlägt damit in den Summen durch.
+- Die Referenztabelle wird für die Summen nicht benötigt.
 
 ### 8.3 GA_FL_VORLAGE.ods
 
 Die Datei `01- Referenzen/GA_FL_VORLAGE.ods` ist die Referenztabelle. Sie definiert, welche Spalten und Werte für jeden Datenpunkttyp (Referenz-DP) in der GA-FL erscheinen. Das Attribut `OC_REF_DP_n` im Symbol verweist auf eine Zeile in dieser Tabelle.
+
+Fehlt die Datei oder ist sie leer, bricht „Projekt erstellen" ab, bevor bestehende Blätter gelöscht werden.
 
 ### 8.4 Ausführung
 
@@ -422,7 +429,7 @@ Die Funktion „Gesamtprojekt" führt alle Schritte in der korrekten Reihenfolge
 4. BAS-Generierung (optional, per Checkbox)
 5. GA-FL Phase 1: Datenextraktion
 6. GA-FL Phase 2: Erzeugung und Befüllung
-7. Summenblätter generieren
+7. GA-FL Phase 3: Summenblätter aus den fertigen GA-FL-Blättern
 8. Textbreitenanpassung
 9. Deckblätter erstellen
 10. Inhaltsverzeichnis erstellen
@@ -457,7 +464,7 @@ Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. D
 | „Projektstruktur ungültig" | Ordner fehlen | Alle 4 Ordner müssen existieren: 01- Referenzen, 02- Skripte, 04- Vorlagen, 05- Projekt Zeichnungen |
 | „LISP-Skript nicht gefunden" | Skripte fehlen in 02- Skripte/ | Alle 5 .lsp-Dateien aus dem Sample-Projekt kopieren |
 | „BAS.csv nicht gefunden" | BAS.csv fehlt oder falsch benannt | Datei muss exakt `BAS.csv` heißen und in `01- Referenzen/` liegen |
-| „GA_FL_VORLAGE.ods nicht gefunden" | ODS-Datei fehlt | `GA_FL_VORLAGE.ods` in `01- Referenzen/` ablegen |
+| „Referenz fehlt" / „GA-FL-Referenz nicht gefunden" | ODS-Datei fehlt oder leer | `GA_FL_VORLAGE.ods` in `01- Referenzen/` ablegen; der Lauf startet erst dann |
 | Keine Datenpunkte erkannt | OC_FL_AKTIV_n nicht gesetzt | Mindestens ein Datenpunkt muss aktiv sein (OC_FL_AKTIV_n = „ja") |
 | BMK-Nummern beginnen nicht bei 01 | FREITEXT_05 = FORTSETZEN | Auf „NEUSTARTEN" setzen oder bmk_counters.tmp löschen |
 | Deckblatt zeigt „Projekt" statt Projektname | PR1 leer | In plankopfdaten.csv den Wert für PR1 eintragen |

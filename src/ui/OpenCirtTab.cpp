@@ -55,7 +55,10 @@
 #include <QLineEdit>
 #include <QFrame>
 #include <QListWidget>
+#include <QTreeWidget>
+#include <QHeaderView>
 #include <QAbstractItemView>
+#include <functional>
 
 // BRX result codes
 #ifndef RTNORM
@@ -78,22 +81,21 @@ namespace BatchProcessing {
 
 namespace {
 
-/// Modal warning that lists an arbitrary number of entries.
+/// Gemeinsamer Rahmen der Sammelmeldungen: Kopftext, eine scrollbare Ansicht,
+/// optionaler Fusstext, Buttonleiste. Der Dialog ist skalierbar und traegt
+/// einen Groessengriff, damit die Buttons unabhaengig von der Zahl der
+/// Eintraege erreichbar bleiben - eine QMessageBox waechst mit ihrem Text und
+/// schiebt sie bei langen Listen unter den Bildschirmrand.
 ///
-/// QMessageBox grows with its text and cannot be resized, so a long list pushes
-/// the buttons past the bottom of the screen and the dialog can no longer be
-/// dismissed. This dialog keeps the entries in a scrollable list, is resizable
-/// and carries a size grip, so the buttons stay reachable regardless of how
-/// many entries pile up.
-///
-/// Returns true when the user confirmed. With askContinue == false the dialog
-/// is a plain acknowledgement and always returns true.
-bool showListWarning(QWidget* parent,
-                     const QString& title,
-                     const QString& intro,
-                     const QStringList& entries,
-                     const QString& outro = QString(),
-                     bool askContinue = false) {
+/// makeView erzeugt die Ansicht mit dem Dialog als Parent. Rueckgabe true bei
+/// Bestaetigung; ohne askContinue ist der Dialog eine reine Quittierung und
+/// liefert immer true.
+static bool runWarningDialog(QWidget* parent,
+                             const QString& title,
+                             const QString& intro,
+                             const std::function<QWidget*(QWidget*)>& makeView,
+                             const QString& outro,
+                             bool askContinue) {
     QDialog dlg(parent);
     dlg.setWindowTitle(title);
     dlg.setSizeGripEnabled(true);
@@ -105,12 +107,7 @@ bool showListWarning(QWidget* parent,
     head->setWordWrap(true);
     layout->addWidget(head);
 
-    QListWidget* list = new QListWidget(&dlg);
-    list->addItems(entries);
-    list->setSelectionMode(QAbstractItemView::NoSelection);
-    list->setTextElideMode(Qt::ElideNone);
-    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    layout->addWidget(list, 1);
+    layout->addWidget(makeView(&dlg), 1);
 
     if (!outro.isEmpty()) {
         QLabel* foot = new QLabel(outro, &dlg);
@@ -130,6 +127,130 @@ bool showListWarning(QWidget* parent,
     layout->addWidget(buttons);
 
     return dlg.exec() == QDialog::Accepted;
+}
+
+/// Sammelmeldung mit flacher Liste (ein Eintrag je Zeile).
+static bool showListWarning(QWidget* parent,
+                            const QString& title,
+                            const QString& intro,
+                            const QStringList& entries,
+                            const QString& outro = QString(),
+                            bool askContinue = false) {
+    return runWarningDialog(parent, title, intro,
+        [&entries](QWidget* dlg) -> QWidget* {
+            QListWidget* list = new QListWidget(dlg);
+            list->addItems(entries);
+            list->setSelectionMode(QAbstractItemView::NoSelection);
+            list->setTextElideMode(Qt::ElideNone);
+            list->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            return list;
+        },
+        outro, askContinue);
+}
+
+/// Eine Gruppe der Baum-Sammelmeldung: Kopfzeile plus Unterzeilen.
+struct WarningGroup {
+    QString head;
+    QStringList children;
+};
+
+/// Sammelmeldung als Baum: je Gruppe ein Knoten mit Anzahl der Unterzeilen,
+/// die Unterzeilen als Kinder, alles aufgeklappt. Oben sieht man, WAS fehlt,
+/// darunter, WO - statt aller Fundstellen in einer einzigen langen Zeile.
+static bool showTreeWarning(QWidget* parent,
+                            const QString& title,
+                            const QString& intro,
+                            const QVector<WarningGroup>& groups,
+                            const QString& childNoun,      // z.B. "Zeichnung"
+                            const QString& outro = QString(),
+                            bool askContinue = false) {
+    return runWarningDialog(parent, title, intro,
+        [&groups, &childNoun](QWidget* dlg) -> QWidget* {
+            QTreeWidget* tree = new QTreeWidget(dlg);
+            tree->setColumnCount(1);
+            tree->setHeaderHidden(true);
+            tree->setRootIsDecorated(true);
+            tree->setSelectionMode(QAbstractItemView::NoSelection);
+            tree->setTextElideMode(Qt::ElideNone);
+            tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            tree->header()->setStretchLastSection(false);
+            tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+            for (const WarningGroup& g : groups) {
+                const int n = g.children.size();
+                QTreeWidgetItem* node = new QTreeWidgetItem(tree);
+                node->setText(0, g.head + "  " + QChar(0x2014) + "  "
+                                 + QString::number(n) + " "
+                                 + (n == 1 ? childNoun : childNoun + "en"));
+                QFont bold = node->font(0);
+                bold.setBold(true);
+                node->setFont(0, bold);
+                for (const QString& c : g.children) {
+                    QTreeWidgetItem* leaf = new QTreeWidgetItem(node);
+                    leaf->setText(0, c);
+                }
+            }
+            tree->expandAll();
+            return tree;
+        },
+        outro, askContinue);
+}
+
+/// Funktionsspalten der GA-FL-Blaetter in Blattreihenfolge. Index 0 (OC_INTEG)
+/// traegt die Integrationsart, keinen Zaehlwert. Dieselbe Liste bestimmt die
+/// Spaltenreihenfolge der Summen-CSVs und die Attributnamen beim Lesen der
+/// Blaetter (<Basis>_DP_<Zeile>).
+static const QStringList kFuncBases = {
+    "OC_INTEG",
+    "OC_1_1_1", "OC_1_1_2", "OC_1_1_3", "OC_1_1_4",
+    "OC_1_2_1", "OC_1_2_2",
+    "OC_1_3_1", "OC_1_3_2", "OC_1_3_3", "OC_1_3_4", "OC_1_3_5",
+    "OC_2_1_1", "OC_2_1_2",
+    "OC_2_2_1", "OC_2_2_2", "OC_2_2_3", "OC_2_2_4", "OC_2_2_5",
+    "OC_2_2_6", "OC_2_2_7", "OC_2_2_8", "OC_2_2_9", "OC_2_2_10",
+    "OC_2_2_11", "OC_2_2_12",
+    "OC_2_3_1", "OC_2_3_2", "OC_2_3_3", "OC_2_3_4", "OC_2_3_5",
+    "OC_2_3_6", "OC_2_3_7", "OC_2_3_8", "OC_2_3_9",
+    "OC_2_4_1", "OC_2_4_2", "OC_2_4_3", "OC_2_4_4", "OC_2_4_5",
+    "OC_2_5_1", "OC_2_5_2", "OC_2_5_3", "OC_2_5_4",
+    "OC_2_6_1", "OC_2_6_2", "OC_2_6_3", "OC_2_6_4", "OC_2_6_5",
+    "OC_2_7_1", "OC_2_7_2", "OC_2_7_3", "OC_2_7_4",
+    "OC_3_1_1", "OC_3_1_2", "OC_3_1_3", "OC_3_1_4", "OC_3_1_5", "OC_3_1_6"
+    // OC_4_1_1 entfernt: ist Kommentarspalte in ODS, keine GA-Funktion
+};
+
+/// Plankopf-Attribute, die ExtractDP.lsp aus einer Quellzeichnung liefert.
+/// Beim Lesen der GA-FL-Blaetter (Phase 3) wird auf dieselbe Auswahl
+/// gefiltert, damit die Summenblaetter genau die Felder erhalten wie bisher.
+static const char* const kPlankopfKeys[] = {
+    "ASP", "GEWERK", "ANLAGE", "ZEICHNUNGSNUMMER", "SSK",
+    "LPH",
+    "KOSTENGRUPPE", "ORTSKENNZEICHEN", "BEMERKUNG",
+    "ERSTELLER", "ERSTELLDATUM", "GEPRUEFT", "NORM",
+    "NAME1", "NAME2", "NAME3",
+    "AN1", "AN2", "AN3", "AN4", "AN5",
+    "AG1", "AG2", "AG3", "AG4", "AG5",
+    "PR1", "PR2", "PR3", "PR4", "PR5",
+    "FREITEXT_01", "FREITEXT_02", "FREITEXT_03",
+    "FREITEXT_04", "FREITEXT_05",
+    "AENDERUNG1", "AENDERUNG2", "AENDERUNG3",
+    "DATUM1", "DATUM2", "DATUM3",
+    "INDEX1", "INDEX2", "INDEX3",
+    "ERSATZFUER"
+};
+
+/// Funktionszaehler eines Datenpunkts aufaddieren. Quelle sind die Zellen des
+/// GA-FL-Blatts (DataPoint::funktionsWerte, Schluessel = Funktionsbasis).
+/// Zaehlregel wie bisher: numerischer Wert > 0 zaehlt mit seinem Wert, jeder
+/// andere nicht-leere Eintrag zaehlt 1. Index 0 (OC_INTEG) wird uebersprungen.
+static void addFuncCounts(QVector<int>& funcCounts, const DataPoint& dp,
+                          const QStringList& funcBases) {
+    for (int fc = 1; fc < funcBases.size() && fc < funcCounts.size(); ++fc) {
+        const QString cellVal = dp.funktionsWerte.value(funcBases[fc]).trimmed();
+        if (cellVal.isEmpty()) continue;
+        bool ok;
+        int numVal = cellVal.toInt(&ok);
+        funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
+    }
 }
 
 }  // namespace
@@ -212,6 +333,12 @@ OpenCirtTab::OpenCirtTab(QWidget* parent)
     m_pdfDoneTimer = new QTimer(this);
     m_pdfDoneTimer->setInterval(2000);
     connect(m_pdfDoneTimer, &QTimer::timeout, this, &OpenCirtTab::onPdfDonePollTimer);
+
+    // Phase 3: startet, sobald das Phase-2-Skript beendet ist (CMDACTIVE = 0).
+    // Der Takt bestimmt nur, wie schnell das Plugin hinschaut - keine Obergrenze.
+    m_phase3StartTimer = new QTimer(this);
+    m_phase3StartTimer->setInterval(500);
+    connect(m_phase3StartTimer, &QTimer::timeout, this, &OpenCirtTab::onPhase3StartTimer);
 
 }
 
@@ -398,53 +525,63 @@ void OpenCirtTab::onPhase1PollTimer() {
     // === Vorab-Validierung: REF_DP gegen Referenz-CSV pruefen ===
     {
         QMap<QString, QVector<QString>> refData = readOdsReference();
-        if (!refData.isEmpty()) {
-            QSet<QString> missingRefs;
-            QMap<QString, QStringList> missingPerDrawing;  // ref -> list of drawings
-            QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
-            
-            for (const SourceDrawingInfo& d : drawings) {
-                for (const DataPoint& dp : d.dataPoints) {
-                    QString ref = dp.refDp.trimmed();
-                    if (!ref.isEmpty() && !refData.contains(ref)) {
-                        missingRefs.insert(ref);
-                        missingPerDrawing[ref].append(drawingsRoot.relativeFilePath(d.filePath));
-                    }
+        if (refData.isEmpty()) {
+            logError("GA-FL-Referenz leer oder nicht lesbar - Abbruch");
+            QMessageBox::critical(this, "Referenz fehlt",
+                "Die Referenz GA_FL_VORLAGE.csv ist leer oder nicht lesbar.\n\n"
+                "Ohne sie koennen die GA-FL-Blaetter nicht befuellt werden. "
+                "Der Lauf wird abgebrochen.");
+            m_gaFlPhase = GaFlPhase::Idle;
+            m_fullProjectMode = false;
+            m_btnFullProject->setText("Projekt erstellen");
+            m_btnFullProject->setEnabled(true);
+            return;
+        }
+
+        QSet<QString> missingRefs;
+        QMap<QString, QStringList> missingPerDrawing;  // ref -> list of drawings
+        QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
+        
+        for (const SourceDrawingInfo& d : drawings) {
+            for (const DataPoint& dp : d.dataPoints) {
+                QString ref = dp.refDp.trimmed();
+                if (!ref.isEmpty() && !refData.contains(ref)) {
+                    missingRefs.insert(ref);
+                    missingPerDrawing[ref].append(drawingsRoot.relativeFilePath(d.filePath));
                 }
             }
-            
-            if (!missingRefs.isEmpty()) {
-                QStringList sortedRefs(missingRefs.begin(), missingRefs.end());
-                sortedRefs.sort();
+        }
+        
+        if (!missingRefs.isEmpty()) {
+            QStringList sortedRefs(missingRefs.begin(), missingRefs.end());
+            sortedRefs.sort();
 
-                QStringList entries;
-                for (const QString& ref : sortedRefs) {
-                    entries << QString("%1  (in: %2)")
-                               .arg(ref, missingPerDrawing[ref].join(", "));
-                }
+            QVector<WarningGroup> groups;
+            logError(QString("%1 fehlende DP-Referenz(en) in GA_FL_VORLAGE.ods").arg(missingRefs.size()));
+            for (const QString& ref : sortedRefs) {
+                QStringList dwgs = missingPerDrawing[ref];
+                dwgs.removeDuplicates();
+                dwgs.sort(Qt::CaseInsensitive);
+                groups.append({ref, dwgs});
+                logError(QString("  Fehlend: %1 (in: %2)").arg(ref, dwgs.join(", ")));
+            }
 
-                logError(QString("%1 fehlende DP-Referenz(en) in GA_FL_VORLAGE.ods").arg(missingRefs.size()));
-                for (const QString& e : entries) {
-                    logError("  Fehlend: " + e);
-                }
+            const bool weiter = showTreeWarning(
+                this, "Fehlende DP-Referenzen",
+                QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in "
+                        "GA_FL_VORLAGE.ods:").arg(missingRefs.size()),
+                groups, "Zeichnung",
+                "Betroffene Datenpunkte werden mit 0 belegt und mit [!REF] "
+                "markiert.\n\nFortfahren?",
+                true);
 
-                const bool weiter = showListWarning(
-                    this, "Fehlende DP-Referenzen",
-                    QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in "
-                            "GA_FL_VORLAGE.ods:").arg(missingRefs.size()),
-                    entries,
-                    "Betroffene Datenpunkte werden mit 0 belegt und mit [!REF] "
-                    "markiert.\n\nFortfahren?",
-                    true);
-
-                if (!weiter) {
-                    logError("Abbruch durch Benutzer (fehlende DP-Referenzen)");
-                    m_gaFlPhase = GaFlPhase::Idle;
-                    m_fullProjectMode = false;
-                    m_btnFullProject->setText("Projekt erstellen");
-                    m_btnFullProject->setEnabled(true);
-                    return;
-                }
+            if (!weiter) {
+                logError("Abbruch durch Benutzer (fehlende DP-Referenzen)");
+                m_gaFlPhase = GaFlPhase::Idle;
+                m_fullProjectMode = false;
+                m_btnFullProject->setText("Projekt erstellen");
+                m_btnFullProject->setEnabled(true);
+                return;
             }
         }
     }
@@ -467,46 +604,20 @@ void OpenCirtTab::onPhase1PollTimer() {
     
     combinedScr += generateGaFlCreationScr(drawings);
     
-    // Summary sheets (ASP + Los + Projekt)
-    log("Summenblatter erzeugen...");
-    combinedScr += "; === Summenblatter ===\n";
-    combinedScr += generateSummarySheetScr(drawings);
-    
-    // Text width adjustment over GA-FL sheets AND every summary sheet.
-    // The files do not exist yet at this point (the same SCR creates them),
-    // so the paths are taken from the generation plan instead of a disk scan.
-    {
-        QStringList textwidthTargets;
-
-        for (const SourceDrawingInfo& drawing : drawings) {
-            QString targetFolder = QFileInfo(drawing.filePath).absolutePath();
-            targetFolder.replace("\\", "/");
-
-            for (int sheet = 1; sheet <= drawing.gaFlSheetCount; ++sheet) {
-                textwidthTargets << QString("%1/%2_GA_FL_%3.dwg")
-                                    .arg(targetFolder, drawing.fileName)
-                                    .arg(sheet, 2, 10, QChar('0'));
-            }
-        }
-
-        // Summary sheets (Gewerk, ASP, Los, Projekt, Los-Gewerke) - these carry
-        // the aggregated totals, i.e. exactly the four digit numbers that need
-        // the width correction.
-        textwidthTargets += m_plannedSummarySheets;
-
-        QString textwidthScr = generateTextwidthScrFor(textwidthTargets);
-        if (!textwidthScr.isEmpty()) {
-            combinedScr += "; === Textbreitenanpassung ===\n";
-            combinedScr += textwidthScr;
-        }
-    }
-
-
-    // Restore system variables
-    combinedScr += "; === Cleanup ===\n";
-    combinedScr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
-    combinedScr += "(progn (setvar \"CMDECHO\" 1)(princ))\n";
-    combinedScr += "(progn (setvar \"EXPERT\" 0)(princ))\n";
+    // Phase 3 (Summen, Textbreiten, Cleanup) haengt an der letzten Zeile dieses
+    // Skripts: OC_PHASE3_PREPARE liest die dann fertigen GA-FL-Blaetter, schreibt
+    // die Summen-CSVs und uebergibt das Phase-3-Skript an das Plugin, das es
+    // startet, sobald dieses Skript beendet ist (siehe onPhase3StartTimer).
+    // Derselbe Weg wie von Phase 1 nach Phase 2: Skriptende als Ausloeser,
+    // keine Obergrenze, unabhaengig von der Projektgroesse.
+    //
+    // Bewusst KEIN _.SCRIPT aus diesem Skript heraus: BricsCAD verschachtelt
+    // Skripte, und nach dem inneren Skript bleibt in der Ausgangszeichnung ein
+    // offener OEFFNEN-Prompt haengen, der den naechsten Befehl schluckt und das
+    // Cleanup unwirksam macht (Praxislauf 09/2026: PDF-Publish blieb haengen,
+    // FILEDIA blieb 0). Ein Skript auf einer Ebene endet sauber.
+    combinedScr += "; === Phase 3: Summen aus den fertigen GA-FL-Blaettern ===\n";
+    combinedScr += "OC_PHASE3_PREPARE\n";
     
     if (!combinedScr.trimmed().isEmpty()) {
         QString desc = m_fullProjectMode ? "Projekt Phase 2" : "GA-FL Phase 2";
@@ -966,6 +1077,21 @@ void OpenCirtTab::onFullProjectGenerate() {
         return;
     }
     
+    // Ohne die Referenz wuerden saemtliche Datenpunkte mit 0 belegt. Die Pruefung
+    // steht bewusst vor der Sicherheitsabfrage und vor dem Cleanup, damit im
+    // Fehlerfall noch keine bestehenden Blaetter geloescht sind.
+    const QString odsPath = referencePath(OpenCirtConfig::GA_FL_VORLAGE_ODS);
+    if (!QFileInfo::exists(odsPath)) {
+        logError("GA-FL-Referenz nicht gefunden: " + odsPath);
+        QMessageBox::critical(this, "Referenz fehlt",
+            QString("Die Referenzdatei %1 wurde nicht gefunden:\n\n%2\n\n"
+                    "Ohne sie koennen die GA-FL-Blaetter nicht befuellt werden. "
+                    "Der Lauf wird nicht gestartet.")
+            .arg(QString::fromLatin1(OpenCirtConfig::GA_FL_VORLAGE_ODS), odsPath));
+        return;
+    }
+
+
     QMessageBox::StandardButton reply = QMessageBox::warning(this,
         "Projekt erstellen",
         "Empfehlung: Speichern Sie den gesamten Zeichnungsordner vorher als "
@@ -996,13 +1122,10 @@ void OpenCirtTab::onFullProjectGenerate() {
     
     // Step 1: ODS conversion
     log("ODS-Konvertierung...");
-    QString odsPath = referencePath(OpenCirtConfig::GA_FL_VORLAGE_ODS);
     QString csvPath = referencePath("GA_FL_VORLAGE.csv");
-    if (QFileInfo::exists(odsPath)) {
-        if (!convertOdsToCSV(odsPath, csvPath)) {
-            logError("ODS-Konvertierung fehlgeschlagen - Abbruch");
-            return;
-        }
+    if (!convertOdsToCSV(odsPath, csvPath)) {
+        logError("ODS-Konvertierung fehlgeschlagen - Abbruch");
+        return;
     }
     
     // Set temp dir for extraction
@@ -2765,43 +2888,7 @@ SourceDrawingInfo OpenCirtTab::parseExtractedCsv(const QString& csvPath, const Q
     SourceDrawingInfo info;
     info.filePath = dwgPath;
     info.fileName = QFileInfo(dwgPath).completeBaseName();
-    info.aspName = detectAspFromPath(dwgPath);
-    info.aspFolder = QFileInfo(dwgPath).absolutePath();
-    
-    // Detect Gewerk and Anlage from folder structure relative to ASP
-    // Structure: ASP / Gewerk / Anlage / *.dwg
-    {
-        QString dwgParent = QFileInfo(dwgPath).absolutePath();
-        QString drawingsRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-        
-        // Find ASP folder by walking up
-        QDir aspSearchDir(dwgParent);
-        QString aspFolderPath;
-        while (aspSearchDir.absolutePath().length() > drawingsRoot.length()) {
-            if (aspSearchDir.dirName().contains("ASP", Qt::CaseInsensitive) ||
-                aspSearchDir.dirName().contains("ISP", Qt::CaseInsensitive)) {
-                aspFolderPath = aspSearchDir.absolutePath();
-                break;
-            }
-            aspSearchDir.cdUp();
-        }
-        
-        if (!aspFolderPath.isEmpty()) {
-            QString relPath = QDir(aspFolderPath).relativeFilePath(dwgParent);
-            QStringList pathParts = relPath.split("/", Qt::SkipEmptyParts);
-            pathParts.removeAll(".");
-            
-            if (pathParts.size() >= 1) {
-                info.gewerk = folderDisplayName(pathParts[0]);
-            }
-            if (pathParts.size() >= 2) {
-                info.anlage = folderDisplayName(pathParts[1]);
-            }
-        } else {
-            // Fallback: parent folder as gewerk
-            info.gewerk = folderDisplayName(QDir(dwgParent).dirName());
-        }
-    }
+    applyFolderHierarchie(info, dwgPath);
     
     QFile file(csvPath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -3145,9 +3232,6 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
     QString fillLspPath = scriptsPath() + "/FillGaFl.lsp";
     fillLspPath.replace("\\", "/");
     
-    QString refCsvPath = referencePath("GA_FL_VORLAGE.csv");
-    refCsvPath.replace("\\", "/");
-    
     if (m_extractTempDir.isEmpty()) {
         m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
                            + "/OpenCirt_extract";
@@ -3171,29 +3255,9 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
     QStringList aspSumCsvPaths;
     int aspSumSheetTotal = 0;
     
-    // Function bases (shared by ASP-Summe and Projekt-Summe)
-    QStringList funcBases = {
-        "OC_INTEG",
-        "OC_1_1_1", "OC_1_1_2", "OC_1_1_3", "OC_1_1_4",
-        "OC_1_2_1", "OC_1_2_2",
-        "OC_1_3_1", "OC_1_3_2", "OC_1_3_3", "OC_1_3_4", "OC_1_3_5",
-        "OC_2_1_1", "OC_2_1_2",
-        "OC_2_2_1", "OC_2_2_2", "OC_2_2_3", "OC_2_2_4", "OC_2_2_5",
-        "OC_2_2_6", "OC_2_2_7", "OC_2_2_8", "OC_2_2_9", "OC_2_2_10",
-        "OC_2_2_11", "OC_2_2_12",
-        "OC_2_3_1", "OC_2_3_2", "OC_2_3_3", "OC_2_3_4", "OC_2_3_5",
-        "OC_2_3_6", "OC_2_3_7", "OC_2_3_8", "OC_2_3_9",
-        "OC_2_4_1", "OC_2_4_2", "OC_2_4_3", "OC_2_4_4", "OC_2_4_5",
-        "OC_2_5_1", "OC_2_5_2", "OC_2_5_3", "OC_2_5_4",
-        "OC_2_6_1", "OC_2_6_2", "OC_2_6_3", "OC_2_6_4", "OC_2_6_5",
-        "OC_2_7_1", "OC_2_7_2", "OC_2_7_3", "OC_2_7_4",
-        "OC_3_1_1", "OC_3_1_2", "OC_3_1_3", "OC_3_1_4", "OC_3_1_5", "OC_3_1_6"
-        // OC_4_1_1 entfernt: ist Kommentarspalte in ODS, keine GA-Funktion
-    };
+    // Funktionsspalten (gemeinsam fuer alle Summenebenen)
+    const QStringList& funcBases = kFuncBases;
     int numFuncs = funcBases.size(); // 57
-    
-    // Read reference CSV for function value aggregation
-    QMap<QString, QVector<QString>> refData = readOdsReference();
     
     for (auto it = aspMap.constBegin(); it != aspMap.constEnd(); ++it) {
         QString aspName = it.key();
@@ -3303,17 +3367,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                     QVector<int> funcCounts(numFuncs, 0);
                     for (const SourceDrawingInfo* d : anDrawings) {
                         for (const DataPoint& dp : d->dataPoints) {
-                            if (!dp.refDp.isEmpty() && refData.contains(dp.refDp)) {
-                                const QVector<QString>& refRow = refData[dp.refDp];
-                                for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                                    QString cellVal = refRow[fc + 2].trimmed();
-                                    if (!cellVal.isEmpty()) {
-                                        bool ok;
-                                        int numVal = cellVal.toInt(&ok);
-                                        funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                                    }
-                                }
-                            }
+                            addFuncCounts(funcCounts, dp, funcBases);
                         }
                     }
                     
@@ -3358,7 +3412,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                     scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
                     scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
                     scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n").arg(gwCsvSlash);
-                    scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n").arg(refCsvPath);
+                    scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
                     scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
                     scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(gwDpOffset);
                     scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThis);
@@ -3417,17 +3471,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             
             for (const SourceDrawingInfo* d : gwDrawings) {
                 for (const DataPoint& dp : d->dataPoints) {
-                    if (!dp.refDp.isEmpty() && refData.contains(dp.refDp)) {
-                        const QVector<QString>& refRow = refData[dp.refDp];
-                        for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                            QString cellVal = refRow[fc + 2].trimmed();
-                            if (!cellVal.isEmpty()) {
-                                bool ok;
-                                int numVal = cellVal.toInt(&ok);
-                                funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                            }
-                        }
-                    }
+                    addFuncCounts(funcCounts, dp, funcBases);
                 }
             }
             
@@ -3501,8 +3545,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
             scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
                    .arg(aspCsvPathSlash);
-            scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n")
-                   .arg(refCsvPath);
+            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
             scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
             scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
             scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
@@ -3613,17 +3656,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             QVector<int> funcCounts(numFuncs, 0);
             for (const SourceDrawingInfo* d : aspDrawings) {
                 for (const DataPoint& dp : d->dataPoints) {
-                    if (!dp.refDp.isEmpty() && refData.contains(dp.refDp)) {
-                        const QVector<QString>& refRow = refData[dp.refDp];
-                        for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                            QString cellVal = refRow[fc + 2].trimmed();
-                            if (!cellVal.isEmpty()) {
-                                bool ok;
-                                int numVal = cellVal.toInt(&ok);
-                                funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                            }
-                        }
-                    }
+                    addFuncCounts(funcCounts, dp, funcBases);
                 }
             }
             
@@ -3677,8 +3710,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
             scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
                    .arg(losCsvSlash);
-            scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n")
-                   .arg(refCsvPath);
+            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
             scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
             scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
             scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
@@ -3754,17 +3786,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                         const QVector<const SourceDrawingInfo*>& aspDrawings = aspMap[aspName];
                         for (const SourceDrawingInfo* d : aspDrawings) {
                             for (const DataPoint& dp : d->dataPoints) {
-                                if (!dp.refDp.isEmpty() && refData.contains(dp.refDp)) {
-                                    const QVector<QString>& refRow = refData[dp.refDp];
-                                    for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                                        QString cellVal = refRow[fc + 2].trimmed();
-                                        if (!cellVal.isEmpty()) {
-                                            bool ok;
-                                            int numVal = cellVal.toInt(&ok);
-                                            funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                                        }
-                                    }
-                                }
+                                addFuncCounts(funcCounts, dp, funcBases);
                             }
                         }
                     }
@@ -3793,17 +3815,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                     QVector<int> funcCounts(numFuncs, 0);
                     for (const SourceDrawingInfo* d : aspDrawings) {
                         for (const DataPoint& dp : d->dataPoints) {
-                            if (!dp.refDp.isEmpty() && refData.contains(dp.refDp)) {
-                                const QVector<QString>& refRow = refData[dp.refDp];
-                                for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                                    QString cellVal = refRow[fc + 2].trimmed();
-                                    if (!cellVal.isEmpty()) {
-                                        bool ok;
-                                        int numVal = cellVal.toInt(&ok);
-                                        funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                                    }
-                                }
-                            }
+                            addFuncCounts(funcCounts, dp, funcBases);
                         }
                     }
                     
@@ -3860,8 +3872,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
             scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
                    .arg(projektCsvSlash);
-            scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n")
-                   .arg(refCsvPath);
+            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
             scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
             scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
             scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
@@ -3952,15 +3963,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                 QVector<int> funcCounts(numFuncs, 0);
                 for (const SourceDrawingInfo* d : gwIt.value()) {
                     for (const DataPoint& dp : d->dataPoints) {
-                        if (dp.refDp.isEmpty() || !refData.contains(dp.refDp)) continue;
-                        const QVector<QString>& refRow = refData[dp.refDp];
-                        for (int fc = 0; fc < numFuncs && (fc + 2) < refRow.size(); ++fc) {
-                            QString cellVal = refRow[fc + 2].trimmed();
-                            if (cellVal.isEmpty()) continue;
-                            bool ok;
-                            int numVal = cellVal.toInt(&ok);
-                            funcCounts[fc] += (ok && numVal > 0) ? numVal : 1;
-                        }
+                        addFuncCounts(funcCounts, dp, funcBases);
                     }
                 }
 
@@ -4010,7 +4013,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                 scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
                 scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
                 scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n").arg(lgCsvSlash);
-                scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n").arg(refCsvPath);
+                scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
                 scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
                 scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(lgOffset);
                 scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
@@ -4037,6 +4040,249 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
 
 // Forward declaration (defined below near DSD generation)
 static QString readZeichnungsnummer(const QString& dwgPath);
+
+void OpenCirtTab::applyFolderHierarchie(SourceDrawingInfo& info, const QString& dwgPath) {
+    info.aspName = detectAspFromPath(dwgPath);
+    info.aspFolder = QFileInfo(dwgPath).absolutePath();
+    info.gewerk.clear();
+    info.anlage.clear();
+
+    // Struktur: ASP / Gewerk / Anlage / *.dwg
+    QString dwgParent = QFileInfo(dwgPath).absolutePath();
+    QString drawingsRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
+
+    QDir aspSearchDir(dwgParent);
+    QString aspFolderPath;
+    while (aspSearchDir.absolutePath().length() > drawingsRoot.length()) {
+        if (aspSearchDir.dirName().contains("ASP", Qt::CaseInsensitive) ||
+            aspSearchDir.dirName().contains("ISP", Qt::CaseInsensitive)) {
+            aspFolderPath = aspSearchDir.absolutePath();
+            break;
+        }
+        aspSearchDir.cdUp();
+    }
+
+    if (!aspFolderPath.isEmpty()) {
+        QString relPath = QDir(aspFolderPath).relativeFilePath(dwgParent);
+        QStringList pathParts = relPath.split("/", Qt::SkipEmptyParts);
+        pathParts.removeAll(".");
+        if (pathParts.size() >= 1) info.gewerk = folderDisplayName(pathParts[0]);
+        if (pathParts.size() >= 2) info.anlage = folderDisplayName(pathParts[1]);
+    } else {
+        // Fallback: Elternordner als Gewerk
+        info.gewerk = folderDisplayName(QDir(dwgParent).dirName());
+    }
+}
+
+// ============================================================================
+// Phase 3: Summen aus den fertigen GA-FL-Blaettern
+// ============================================================================
+//
+// Die Summenblaetter aggregieren die GA-FL-Blaetter, sie rechnen nicht aus der
+// Referenz neu. Wer ein GA-FL-Blatt von Hand korrigiert, bekommt die Korrektur
+// in den Summen wieder - und die Summen brauchen die GA_FL_VORLAGE nicht.
+//
+// Ablauf: Das Phase-2-Skript ruft als letzte Zeile den Befehl OC_PHASE3_PREPARE
+// auf (-> preparePhase3), der die Blaetter per Side-Database liest, die
+// Summen-CSVs schreibt und das Phase-3-Skript bereitlegt. onPhase3StartTimer
+// startet es per executeScrFile, sobald das Phase-2-Skript beendet ist
+// (CMDACTIVE = 0) - eine Skriptebene, kein _.SCRIPT aus dem Skript heraus.
+
+QString OpenCirtTab::phase3ScrPath() const {
+    QString dir = m_extractTempDir;
+    if (dir.isEmpty()) {
+        dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+              + "/OpenCirt_extract";
+    }
+    return dir + "/phase3.scr";
+}
+
+QVector<SourceDrawingInfo> OpenCirtTab::readGaFlSheetsForSummary(QStringList& sheetPaths) {
+    QVector<SourceDrawingInfo> result;
+    sheetPaths.clear();
+
+    QStringList gaFlFiles;
+    {
+        QDirIterator it(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR),
+                        QStringList() << "*_GA_FL_*.dwg", QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) gaFlFiles << it.next();
+        gaFlFiles.sort(Qt::CaseInsensitive);
+    }
+    if (gaFlFiles.isEmpty()) {
+        logError("Keine GA-FL-Blaetter im Zeichnungsordner gefunden");
+        return result;
+    }
+
+    ensurePlankopfCsvLoaded();
+    const QString blockName = QString::fromLatin1(OpenCirtConfig::GA_FL_BLOCK_NAME);
+    const QString uebertragAscii = QStringLiteral("Uebertrag");
+    const QString uebertragUmlaut = QString::fromUtf8("\xC3\x9C" "bertrag");
+
+    int unlesbar = 0;
+    int dpTotal = 0;
+
+    for (const QString& sheetPath : gaFlFiles) {
+        SheetAttributes sa = readSheetAttributes(sheetPath, blockName);
+        if (!sa.ok || sa.gaFl.isEmpty()) {
+            ++unlesbar;
+            logError(QString("  Kein GA-FL-Block lesbar: %1")
+                     .arg(QFileInfo(sheetPath).fileName()));
+            continue;
+        }
+
+        SourceDrawingInfo info;
+        info.filePath = sheetPath;
+        info.fileName = QFileInfo(sheetPath).completeBaseName();
+        applyFolderHierarchie(info, sheetPath);
+
+        // Plankopf wie aus der Extraktion: nur die bekannten Felder, dann die
+        // Stammdaten aus plankopfdaten.csv drueber, ASP aus der Ordnerhierarchie.
+        for (const char* key : kPlankopfKeys) {
+            const QString k = QString::fromLatin1(key);
+            if (sa.plankopf.contains(k)) {
+                info.plankopfAttributes[k] = sa.plankopf.value(k);
+            }
+        }
+        for (auto it = m_plankopfCsvData.constBegin(); it != m_plankopfCsvData.constEnd(); ++it) {
+            info.plankopfAttributes[it.key()] = it.value();
+        }
+        info.plankopfAttributes["ASP"] =
+            info.aspName.isEmpty() ? QString() : folderDisplayName(info.aspName);
+
+        for (int n = 1; n <= OpenCirtConfig::MAX_DP_FIRST_SHEET; ++n) {
+            const QString suffix = QString("_DP_%1").arg(n);
+            const QString bez = sa.gaFl.value(QStringLiteral("OC_BEZEICHNUNG") + suffix).trimmed();
+            const QString bas = sa.gaFl.value(QStringLiteral("OC_AKS") + suffix).trimmed();
+
+            // Leere Zeile
+            if (bez.isEmpty() && bas.isEmpty()) continue;
+
+            // Zeile 1 der Folgeblaetter traegt den Uebertrag, keinen Datenpunkt
+            if (bas.isEmpty() &&
+                (bez.compare(uebertragAscii, Qt::CaseInsensitive) == 0 ||
+                 bez.compare(uebertragUmlaut, Qt::CaseInsensitive) == 0)) {
+                continue;
+            }
+
+            DataPoint dp;
+            dp.dpIndex = n;
+            dp.aks = bas;
+            dp.basString = bas;
+            dp.integDp = sa.gaFl.value(QStringLiteral("OC_INTEG") + suffix).trimmed();
+
+            // OC_BEZEICHNUNG_DP_n traegt "BMK - Klartext" (siehe FillGaFl.lsp)
+            const int sep = bez.indexOf(QStringLiteral(" - "));
+            if (sep > 0) {
+                dp.bmk = bez.left(sep).trimmed();
+                dp.bezeichnung = bez.mid(sep + 3).trimmed();
+            } else {
+                dp.bezeichnung = bez;
+            }
+
+            for (const QString& fb : kFuncBases) {
+                const QString v = sa.gaFl.value(fb + suffix).trimmed();
+                if (!v.isEmpty()) dp.funktionsWerte[fb] = v;
+            }
+
+            info.dataPoints.append(dp);
+        }
+
+        dpTotal += info.dataPoints.size();
+        info.gaFlSheetCount = 1;
+        sheetPaths << sheetPath;
+        result.append(info);
+    }
+
+    log(QString("GA-FL-Blaetter gelesen: %1 Blaetter, %2 Datenpunkte%3")
+        .arg(result.size()).arg(dpTotal)
+        .arg(unlesbar > 0 ? QString(", %1 nicht lesbar").arg(unlesbar) : QString()));
+    return result;
+}
+
+void OpenCirtTab::preparePhase3() {
+    // Laeuft innerhalb des Phase-2-Skripts (Befehl OC_PHASE3_PREPARE) als
+    // dessen letzte Zeile. Das Phase-3-Skript entsteht in jedem Zweig - auch
+    // ohne lesbare Blaetter, damit das Cleanup der Systemvariablen (FILEDIA,
+    // CMDECHO, EXPERT) auf jeden Fall laeuft.
+    if (m_extractTempDir.isEmpty()) {
+        m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+                           + "/OpenCirt_extract";
+    }
+    QDir().mkpath(m_extractTempDir);
+
+    QString scr;
+    scr += "; === Phase 3: Summen aus den fertigen GA-FL-Blaettern ===\n";
+
+    log("Phase 3: GA-FL-Blaetter lesen...");
+    QStringList sheetPaths;
+    QVector<SourceDrawingInfo> sheets = readGaFlSheetsForSummary(sheetPaths);
+
+    if (sheets.isEmpty()) {
+        logError("Phase 3: keine lesbaren GA-FL-Blaetter - es werden keine Summenblaetter erzeugt");
+    } else {
+        log("Summenblaetter erzeugen...");
+        scr += "; === Summenblaetter ===\n";
+        scr += generateSummarySheetScr(sheets);
+
+        // Textbreiten ueber alle GA-FL-Blaetter und alle geplanten Summenblaetter.
+        // Die Summenblaetter existieren erst, wenn phase3.scr sie erzeugt hat,
+        // deshalb aus dem Plan statt per Verzeichnissuche.
+        QStringList textwidthTargets = sheetPaths;
+        textwidthTargets += m_plannedSummarySheets;
+        QString textwidthScr = generateTextwidthScrFor(textwidthTargets);
+        if (!textwidthScr.isEmpty()) {
+            scr += "; === Textbreitenanpassung ===\n";
+            scr += textwidthScr;
+        }
+    }
+
+    // Systemvariablen zuruecksetzen - letzter Schritt des Gesamtlaufs
+    scr += "; === Cleanup ===\n";
+    scr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
+    scr += "(progn (setvar \"CMDECHO\" 1)(princ))\n";
+    scr += "(progn (setvar \"EXPERT\" 0)(princ))\n";
+
+    // Kopie zum Nachlesen im Tempordner; gestartet wird aus m_phase3Scr.
+    {
+        QFile file(phase3ScrPath());
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QTextStream stream(&file);
+            stream << scr;
+        }
+    }
+
+    m_phase3Scr = scr;
+    m_phase3WaitLogged = false;
+    m_phase3StartTimer->start();
+    logSuccess("Phase 3 vorbereitet - startet, sobald Phase 2 beendet ist.");
+}
+
+void OpenCirtTab::onPhase3StartTimer() {
+    if (m_phase3Scr.isEmpty()) {
+        m_phase3StartTimer->stop();
+        return;
+    }
+
+    // Erst starten, wenn kein Skript und kein Befehl mehr aktiv ist. Ohne
+    // Obergrenze: solange BricsCAD beschaeftigt ist, wird gewartet. Bleibt ein
+    // Prompt offen, steht das einmal im Log und Esc loest es auf.
+    struct resbuf rb;
+    if (acedGetVar(_T("CMDACTIVE"), &rb) == RTNORM && rb.resval.rint != 0) {
+        if (!m_phase3WaitLogged) {
+            log("Phase 3: warte auf Skriptende (CMDACTIVE != 0)...");
+            m_phase3WaitLogged = true;
+        }
+        return;
+    }
+
+    m_phase3StartTimer->stop();
+    const QString scr = m_phase3Scr;
+    m_phase3Scr.clear();
+    if (executeScrFile(scr, "Projekt Phase 3")) {
+        logSuccess("Phase 3 gestartet - BricsCAD erzeugt die Summenblaetter.");
+    }
+}
 
 QString OpenCirtTab::findInhaltVorlage() {
     // Complete DIN-A2 sheet: frame, Plankopf and the 22-row entry block already

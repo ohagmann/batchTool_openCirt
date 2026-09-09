@@ -7,6 +7,16 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+## [1.5.0] – 2026-09-09
+
+### Changed
+- **Die Summenblätter entstehen aus den fertigen GA-FL-Blättern.** Bisher rechnete der Gesamtlauf die Summen aus den Extraktionsdaten und der Referenztabelle neu – parallel zu den GA-FL-Blättern, nicht aus ihnen. Eine Handkorrektur in einem Blatt kam in den Summen nie an, und die Summen hingen an der `GA_FL_VORLAGE`, obwohl sie nur aggregieren sollen. Jetzt läuft die Summenbildung als eigene Phase 3, nachdem das letzte GA-FL-Blatt gespeichert ist: Die Blätter werden per Side-Database gelesen (derselbe Leser wie beim Datenpunkt-Export), die Funktionswerte kommen aus den Blattzellen, der Übertrag der Folgeblätter wird übersprungen. Für die Summenblätter setzt `FillGaFl` keine Referenz mehr voraus. Ergebnis bei unveränderten Blättern identisch – Σ(Referenzwerte je Datenpunkt) ist Σ(Blattzellen je Datenpunkt); Datenpunkte ohne `OC_REF_DP`, die Funktionswerte im Symbol tragen, zählen jetzt ebenfalls mit, weil das Blatt sie zeigt
+- **Phase 3 startet ohne Zeitlimit.** Das Phase-2-Skript endet mit dem Plugin-Befehl `OC_PHASE3_PREPARE`, der die Blätter liest, die Summen-CSVs schreibt und das Phase-3-Skript (Summen, Textbreiten, Zurücksetzen der Systemvariablen) bereitlegt. Das Plugin startet es, sobald das Phase-2-Skript beendet ist (`CMDACTIVE` = 0) – derselbe Weg wie von Phase 1 nach Phase 2, ohne Obergrenze und damit unabhängig von der Projektgröße. Ein verschachtelter Start per `_.SCRIPT` aus dem Skript heraus wurde verworfen: BricsCAD lässt danach in der Ausgangszeichnung einen offenen ÖFFNEN-Prompt stehen, der den nächsten Befehl schluckt und das Cleanup unwirksam macht
+
+### Fixed
+- **Fehlende Referenzen als Baum.** Der Dialog aus 1.4.2 zeigte je Referenz eine Zeile mit allen betroffenen Zeichnungen dahinter – bei vielen Fundstellen unlesbar. Jetzt ist jede fehlende Referenz ein Knoten mit Anzahl, die Zeichnungen stehen als Unterzeilen darunter, alles aufgeklappt; Dialog weiterhin skalierbar. Die Meldung zu Referenzwerten > 1 bleibt eine flache Liste
+- **Fehlende Referenz bricht den Gesamtlauf ab.** Fehlte `GA_FL_VORLAGE.ods`, übersprang der Lauf die Konvertierung stillschweigend; war die CSV leer oder unlesbar, entfiel die Vorabprüfung ebenso still – alle Datenpunkte landeten auf 0. Jetzt wird die ODS vor der Sicherheitsabfrage und vor dem Cleanup geprüft (nichts wird gelöscht), und eine leere Referenz-CSV beendet den Lauf nach der Extraktion mit Meldung und Zustandsreset
+
 ## [1.4.2] – 2026-09-09
 
 ### Fixed

@@ -1,4 +1,4 @@
-#include "windows_fix.h"  // CRITICAL: Qt 6.8+ fix - MUST be FIRST
+﻿#include "windows_fix.h"  // CRITICAL: Qt 6.8+ fix - MUST be FIRST
 /**
  * @file BatchProcessingPlugin.cpp
  * @brief BRX Plugin Entry Point and Registration
@@ -17,6 +17,7 @@
 #include "BatchProcessingPlugin.h"
 #include "Commands.h"
 #include "../ui/MainWindow.h"
+#include "../ui/OpenCirtTab.h"
 #include "../ui/Theming.h"
 
 #include <QApplication>
@@ -113,6 +114,25 @@ void registerCommands() {
         ACRX_CMD_MODAL,
         batchProcessCommand
     );
+
+    // Wird vom Phase-2-Skript des Gesamtlaufs aufgerufen, sobald das letzte
+    // GA-FL-Blatt gespeichert ist (siehe OpenCirtTab::preparePhase3).
+    acedRegCmds->addCommand(
+        _T("BATCH_PROCESSING_CMDS"),
+        _T("OC_PHASE3_PREPARE"),
+        _T("OC_PHASE3_PREPARE"),
+        ACRX_CMD_MODAL,
+        phase3PrepareCommand
+    );
+}
+
+// OC_PHASE3_PREPARE: Summen-Phase des Gesamtlaufs vorbereiten
+void phase3PrepareCommand() {
+    if (!g_mainWindow || !g_mainWindow->openCirtTab()) {
+        acutPrintf(_T("\nOC_PHASE3_PREPARE: Batchtool-Fenster nicht initialisiert.\n"));
+        return;
+    }
+    g_mainWindow->openCirtTab()->preparePhase3();
 }
 
 void unregisterCommands() {

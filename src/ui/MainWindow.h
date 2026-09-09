@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file MainWindow.h
  * @brief Main Window for Batch Processing Plugin - Professional Edition
  * @version 2.0.0
@@ -53,6 +53,10 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    /// openCirt-Tab fuer Plugin-Befehle, die aus einem laufenden Skript
+    /// kommen (OC_PHASE3_PREPARE)
+    OpenCirtTab* openCirtTab() const { return m_openCirtTab; }
 
 signals:
     void startProcessing();

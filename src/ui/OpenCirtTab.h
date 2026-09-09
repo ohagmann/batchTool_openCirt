@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file OpenCirtTab.h
  * @brief openCirt Tab - GA-Automation for BricsCAD BatchProcessing Plugin
  * @version 2.0.0
@@ -152,6 +152,13 @@ public:
     /// Check if openCirt functions are enabled
     bool isEnabled() const;
 
+    /// Phase 3 des Gesamtlaufs. Wird vom Plugin-Befehl OC_PHASE3_PREPARE aus
+    /// dem Phase-2-Skript aufgerufen, sobald das letzte GA-FL-Blatt gespeichert
+    /// ist: liest die fertigen Blaetter, schreibt die Summen-CSVs und legt
+    /// das Phase-3-Skript (Summen, Textbreiten, Cleanup) bereit, das
+    /// onPhase3StartTimer startet, sobald das Phase-2-Skript beendet ist.
+    void preparePhase3();
+
 signals:
     void logMessage(const QString& message, const QString& type);
 
@@ -175,6 +182,9 @@ private slots:
     
     /// Timer callback: poll for Phase 1 completion marker
     void onPhase1PollTimer();
+
+    /// Timer callback: Phase 3 starten, sobald das Phase-2-Skript beendet ist
+    void onPhase3StartTimer();
 
 private:
     void setupUi();
@@ -297,6 +307,18 @@ private:
     /// Generate summary sheets SCR
     QString generateSummarySheetScr(const QVector<SourceDrawingInfo>& drawings);
 
+    /// Phase 3: die fertigen GA-FL-Blaetter als Datenquelle fuer die Summen.
+    /// Ein Eintrag je Blatt; Funktionswerte je Datenpunkt aus den Blattzellen
+    /// (DataPoint::funktionsWerte, Schluessel = Funktionsbasis). sheetPaths
+    /// erhaelt die gelesenen Blaetter fuer die Textbreitenanpassung.
+    QVector<SourceDrawingInfo> readGaFlSheetsForSummary(QStringList& sheetPaths);
+
+    /// ASP/Gewerk/Anlage aus dem Ablageort einer Zeichnung ableiten
+    void applyFolderHierarchie(SourceDrawingInfo& info, const QString& dwgPath);
+
+    /// Pfad des Phase-3-Skripts im Extraktions-Tempordner
+    QString phase3ScrPath() const;
+
     // ================================================================
     // Phase 4: Text Width Adjustment
     // ================================================================
@@ -416,8 +438,8 @@ private:
     QString m_extractTempDir;   ///< Temp dir for extracted CSVs
 
     /// Full paths of all summary sheets planned by generateSummarySheetScr().
-    /// Needed because the text width adjustment runs in the same SCR, i.e.
-    /// before those files exist on disk and can be found by a directory scan.
+    /// Needed because the text width adjustment runs in the same SCR
+    /// (phase3.scr), i.e. before those files exist on disk.
     QStringList m_plannedSummarySheets;
 
     /// Last filter used in the datapoint export dialog (semicolon separated)
@@ -427,6 +449,11 @@ private:
     QTimer* m_phase1Timer = nullptr;    ///< Polls for marker file
     QString m_phase1MarkerPath;         ///< Path to completion marker
     bool m_fullProjectMode = false;     ///< True when running Gesamtprojekt
+
+    // Phase 3: Start nach Ende des Phase-2-Skripts
+    QTimer* m_phase3StartTimer = nullptr;   ///< Prueft CMDACTIVE, startet Phase 3
+    QString m_phase3Scr;                    ///< Vorbereitetes Phase-3-Skript
+    bool m_phase3WaitLogged = false;        ///< "warte auf Skriptende" nur einmal loggen
     
     // Publish: Inhalt generation -> PDF publish polling
     QTimer* m_publishTimer = nullptr;   ///< Polls for Inhalt SCR completion
