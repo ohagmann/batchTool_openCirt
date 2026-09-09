@@ -1,9 +1,9 @@
 /**
  * @file OpenCirtTab.h
- * @brief OpenCirt Tab - GA-Automation for BricsCAD BatchProcessing Plugin
+ * @brief openCirt Tab - GA-Automation for BricsCAD BatchProcessing Plugin
  * @version 2.0.0
  * 
- * Implements the OpenCirt tab with 5 functions:
+ * Implements the openCirt tab with 5 functions:
  * 1. BMK-Nummerierung generieren
  * 2. BAS-Generierung
  * 3. GA-Funktionslisten generieren
@@ -131,7 +131,7 @@ struct OpenCirtConfig {
 };
 
 // ============================================================================
-// OpenCirt Tab Widget
+// openCirt Tab Widget
 // ============================================================================
 
 class OpenCirtTab : public QWidget {
@@ -149,7 +149,7 @@ public:
     void loadConfig();
     void saveConfig();
     
-    /// Check if OpenCirt functions are enabled
+    /// Check if openCirt functions are enabled
     bool isEnabled() const;
 
 signals:

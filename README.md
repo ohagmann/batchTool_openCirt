@@ -21,7 +21,7 @@ Das Plugin bietet sechs Funktionsbereiche als Tabs im Hauptfenster:
 **Attributes** – Blockattribute gezielt ändern (nach Block, Tag, Sichtbarkeit filterbar)
 **Layers** – Layer löschen, umbenennen, einfrieren, Farbe/Linientyp/Transparenz ändern
 **LISP** – Eigene LISP-Skripte automatisiert auf alle DWG-Dateien anwenden
-**OpenCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Summenblätter, Deckblätter, Inhaltsverzeichnis, Sensorliste, Datenpunkt-/IO-Export, PDF-Publish)
+**openCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Summenblätter, Deckblätter, Inhaltsverzeichnis, Sensorliste, Datenpunkt-/IO-Export, PDF-Publish)
 
 ## Voraussetzungen
 
@@ -160,7 +160,7 @@ Hinweise:
 - Die aktuell geöffnete Zeichnung darf nicht in der Batch-Liste enthalten sein.
 - Während der Verarbeitung BricsCAD nicht manuell bedienen.
 
-### Tab: OpenCirt
+### Tab: openCirt
 
 GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Funktionen:
 

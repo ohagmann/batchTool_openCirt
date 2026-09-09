@@ -1,8 +1,8 @@
-# OpenCirt – Bedienungsanleitung
+# openCirt – Bedienungsanleitung
 
 **Version:** 1.0  
 **Stand:** März 2026  
-**Für:** BricsCAD V26 mit Batchtool/OpenCirt Plugin
+**Für:** BricsCAD V26 mit Batchtool/openCirt Plugin
 
 ---
 
@@ -25,7 +25,7 @@
 
 ## 1. Überblick
 
-OpenCirt automatisiert die Erstellung von GA-Planungsunterlagen in BricsCAD. Aus Schema-Zeichnungen mit standardisierten Symbolen werden automatisch erzeugt:
+openCirt automatisiert die Erstellung von GA-Planungsunterlagen in BricsCAD. Aus Schema-Zeichnungen mit standardisierten Symbolen werden automatisch erzeugt:
 
 - **BMK-Nummern** (Betriebsmittelkennzeichen) für alle Datenpunkte
 - **BAS-Bezeichner** (Benutzeradressierungssystem) nach frei konfigurierbarer Vorlage
@@ -59,13 +59,13 @@ Der gesamte Ablauf von der Schema-Zeichnung bis zum fertigen PDF-Planungspaket i
 
 Befehl in der Kommandozeile: `BATCHTOOL`
 
-Das Hauptfenster öffnet sich mit den Tabs: General, Text, Attributes, Layers, LISP, **OpenCirt**.
+Das Hauptfenster öffnet sich mit den Tabs: General, Text, Attributes, Layers, LISP, **openCirt**.
 
 ---
 
 ## 3. Projektstruktur anlegen
 
-Jedes OpenCirt-Projekt folgt einer festen Ordnerstruktur. Dieses Sample-Projekt dient als Vorlage – kopieren Sie den gesamten `04- OC SAMPLE`-Ordner und benennen Sie ihn um.
+Jedes openCirt-Projekt folgt einer festen Ordnerstruktur. Dieses Sample-Projekt dient als Vorlage – kopieren Sie den gesamten `04- OC SAMPLE`-Ordner und benennen Sie ihn um.
 
 ### 3.1 Ordnerstruktur
 
@@ -142,7 +142,7 @@ Die Nummerierung am Anfang (01, 02, ...) bestimmt die Sortierung, in allen Ebene
 
 ### 4.2 Symbole aus der Blockbibliothek einfügen
 
-Die Blockbibliothek (`03- Blockbibliothek/`) enthält vorgefertigte Symbole mit allen OpenCirt-Attributen.
+Die Blockbibliothek (`03- Blockbibliothek/`) enthält vorgefertigte Symbole mit allen openCirt-Attributen.
 
 **Symbol einfügen:**
 
@@ -169,14 +169,14 @@ Die Blockbibliothek (`03- Blockbibliothek/`) enthält vorgefertigte Symbole mit 
 1. Kopieren Sie `Symbolvorlage_20_DP_V_1_0.dwg` aus `03- Blockbibliothek/00- Vorlagensymbol/`.
 2. Öffnen Sie die Kopie in BricsCAD.
 3. Zeichnen Sie Ihre Grafik.
-4. Die vorhandenen OC-Attribute bleiben erhalten – sie werden automatisch von den OpenCirt-Skripten befüllt.
+4. Die vorhandenen OC-Attribute bleiben erhalten – sie werden automatisch von den openCirt-Skripten befüllt.
 5. Nicht benötigte Datenpunkte deaktivieren: Attribut `OC_FL_AKTIV_n` auf leer setzen (nur Datenpunkte mit Aktiv-Kennzeichen werden verarbeitet).
 
 **Tipp:** Falls nach dem Bearbeiten eines Blocks die Attribut-Reihenfolge im Eigenschaftenfenster durcheinander ist, können Sie die ATTDEFs im Block-Editor (BEDIT) manuell löschen und in der gewünschten Reihenfolge neu anlegen.
 
 ### 4.4 Wichtige OC-Attribute in den Symbolen
 
-Jedes OpenCirt-Symbol enthält folgende Attribute pro Datenpunkt (n = 1..20):
+Jedes openCirt-Symbol enthält folgende Attribute pro Datenpunkt (n = 1..20):
 
 | Attribut | Beschreibung | Beispiel |
 |---|---|---|
@@ -226,7 +226,7 @@ ERSTELLDATUM;01.04.2026;Erstelldatum
 
 ### 5.2 Ausführung
 
-1. Im BATCHTOOL den Tab **OpenCirt** öffnen.
+1. Im BATCHTOOL den Tab **openCirt** öffnen.
 2. Im Tab **General** den Projektordner auswählen (der Ordner, der `05- Projekt Zeichnungen/` enthält).
 3. Auf **„Plankopf-Daten setzen"** klicken.
 4. Alle Zeichnungen werden geöffnet, die CSV-Daten in die Plankopf-Attribute geschrieben, gespeichert und geschlossen.
@@ -260,7 +260,7 @@ Wenn ein Block ein Attribut `OC_AKS_LOCK` hat und dieses auf „JA", „TRUE" od
 
 ### 6.4 Ausführung
 
-1. Im OpenCirt-Tab auf **„BMK erstellen"** klicken.
+1. Im openCirt-Tab auf **„BMK erstellen"** klicken.
 2. Alle Zeichnungen werden sequenziell verarbeitet.
 
 ---
@@ -318,7 +318,7 @@ Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil d
 
 ### 7.3 Ausführung
 
-1. Im OpenCirt-Tab auf **„BAS generieren"** klicken.
+1. Im openCirt-Tab auf **„BAS generieren"** klicken.
 2. Die BAS.csv wird eingelesen, alle aktiven Datenpunkte werden verarbeitet.
 3. Ergebnis wird in `OC_BAS_DP_n` geschrieben.
 
@@ -326,7 +326,7 @@ Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil d
 
 ## 8. GA-Funktionslisten erstellen
 
-Die GA-FL-Erstellung ist der Kern von OpenCirt. Sie läuft in zwei Phasen:
+Die GA-FL-Erstellung ist der Kern von openCirt. Sie läuft in zwei Phasen:
 
 ### 8.1 Phase 1: Datenextraktion
 
@@ -346,7 +346,7 @@ Die Datei `01- Referenzen/GA_FL_VORLAGE.ods` ist die Referenztabelle. Sie defini
 
 ### 8.4 Ausführung
 
-1. Im OpenCirt-Tab auf **„GA-FL erstellen"** klicken.
+1. Im openCirt-Tab auf **„GA-FL erstellen"** klicken.
 2. **Erster Klick:** Phase 1 (Extraktion) läuft.
 3. Warten bis Phase 1 abgeschlossen ist (Meldung im Log).
 4. **Zweiter Klick:** Phase 2 (Erzeugung und Befüllung) läuft automatisch.
@@ -382,7 +382,7 @@ Die Deckblätter werden aus der Vorlage `OC_VORLAGE_DIN_A2_V12.dwg` erzeugt. Der
 
 ### 9.2 Ausführung
 
-Im OpenCirt-Tab auf **„Deckblätter erstellen"** klicken.
+Im openCirt-Tab auf **„Deckblätter erstellen"** klicken.
 
 ---
 
@@ -408,7 +408,7 @@ Nach dem Inhaltsverzeichnis wird automatisch ein Multi-Sheet-PDF im Ordner `06- 
 
 ### 10.3 Ausführung
 
-Im OpenCirt-Tab auf **„PDF Publish"** klicken. Inhaltsverzeichnis und PDF werden nacheinander erzeugt.
+Im openCirt-Tab auf **„PDF Publish"** klicken. Inhaltsverzeichnis und PDF werden nacheinander erzeugt.
 
 ---
 
@@ -429,7 +429,7 @@ Die Funktion „Gesamtprojekt" führt alle Schritte in der korrekten Reihenfolge
 
 Der PDF-Publish muss dann noch separat angestoßen werden.
 
-### Checkboxen im OpenCirt-Tab
+### Checkboxen im openCirt-Tab
 
 | Option | Beschreibung |
 |---|---|
@@ -438,7 +438,7 @@ Der PDF-Publish muss dann noch separat angestoßen werden.
 
 ### Ausführung
 
-Im OpenCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. Der Prozess läuft vollautomatisch – BricsCAD während der Verarbeitung nicht manuell bedienen!
+Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. Der Prozess läuft vollautomatisch – BricsCAD während der Verarbeitung nicht manuell bedienen!
 
 ---
 
@@ -475,11 +475,11 @@ Wenn die Reihenfolge der Attribute im Eigenschaftenfenster durcheinander ist (z.
 
 ## Lizenz
 
-OpenCirt steht unter der Business Source License 1.1 (BSL 1.1). Nutzung für interne Zwecke und kommerzielle Projekte ist erlaubt. Verkauf als eigenständiges Produkt und SaaS-Angebote sind untersagt. Ab 2030-03-02 wird die Software unter AGPLv3 verfügbar.
+openCirt steht unter der Business Source License 1.1 (BSL 1.1). Nutzung für interne Zwecke und kommerzielle Projekte ist erlaubt. Verkauf als eigenständiges Produkt und SaaS-Angebote sind untersagt. Ab 2030-03-02 wird die Software unter AGPLv3 verfügbar.
 
 Siehe [LICENSE](../LICENSE) und [ADDITIONAL_TERMS](../ADDITIONAL_TERMS) im Repository.
 
 ---
 
-*OpenCirt – Open Source GA-Planungsautomatisierung für BricsCAD*  
+*openCirt – Open Source GA-Planungsautomatisierung für BricsCAD*  
 *© 2026 Oliver Hagmann*

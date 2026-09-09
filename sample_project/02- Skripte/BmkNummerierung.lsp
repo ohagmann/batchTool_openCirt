@@ -1,5 +1,5 @@
 ;;; =====================================================================
-;;; BmkNummerierung.lsp - BMK Nummerierung für OpenCirt BatchProcessing
+;;; BmkNummerierung.lsp - BMK Nummerierung für openCirt BatchProcessing
 ;;; =====================================================================
 ;;; Version: 2.2 - OC_AKS_LOCK Attribut: gesperrte Blöcke nicht nummerieren
 ;;; 

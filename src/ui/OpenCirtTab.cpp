@@ -1,7 +1,7 @@
 ﻿#include "windows_fix.h"  // CRITICAL: Qt 6.8+ fix - MUST be FIRST
 /**
  * @file OpenCirtTab.cpp
- * @brief OpenCirt Tab Implementation - GA-Automation Orchestrator
+ * @brief openCirt Tab Implementation - GA-Automation Orchestrator
  * @version 1.0.0
  * 
  * Reference: OpenCirt_Tab_TechnicalSpec_v1.1
@@ -54,6 +54,8 @@
 #include <QDialogButtonBox>
 #include <QLineEdit>
 #include <QFrame>
+#include <QListWidget>
+#include <QAbstractItemView>
 
 // BRX result codes
 #ifndef RTNORM
@@ -73,6 +75,65 @@
 #endif
 
 namespace BatchProcessing {
+
+namespace {
+
+/// Modal warning that lists an arbitrary number of entries.
+///
+/// QMessageBox grows with its text and cannot be resized, so a long list pushes
+/// the buttons past the bottom of the screen and the dialog can no longer be
+/// dismissed. This dialog keeps the entries in a scrollable list, is resizable
+/// and carries a size grip, so the buttons stay reachable regardless of how
+/// many entries pile up.
+///
+/// Returns true when the user confirmed. With askContinue == false the dialog
+/// is a plain acknowledgement and always returns true.
+bool showListWarning(QWidget* parent,
+                     const QString& title,
+                     const QString& intro,
+                     const QStringList& entries,
+                     const QString& outro = QString(),
+                     bool askContinue = false) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(title);
+    dlg.setSizeGripEnabled(true);
+    dlg.resize(760, 460);
+
+    QVBoxLayout* layout = new QVBoxLayout(&dlg);
+
+    QLabel* head = new QLabel(intro, &dlg);
+    head->setWordWrap(true);
+    layout->addWidget(head);
+
+    QListWidget* list = new QListWidget(&dlg);
+    list->addItems(entries);
+    list->setSelectionMode(QAbstractItemView::NoSelection);
+    list->setTextElideMode(Qt::ElideNone);
+    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    layout->addWidget(list, 1);
+
+    if (!outro.isEmpty()) {
+        QLabel* foot = new QLabel(outro, &dlg);
+        foot->setWordWrap(true);
+        layout->addWidget(foot);
+    }
+
+    QDialogButtonBox* buttons = new QDialogButtonBox(&dlg);
+    if (askContinue) {
+        buttons->addButton("Fortfahren", QDialogButtonBox::AcceptRole);
+        buttons->addButton("Abbrechen", QDialogButtonBox::RejectRole);
+    } else {
+        buttons->addButton("OK", QDialogButtonBox::AcceptRole);
+    }
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    return dlg.exec() == QDialog::Accepted;
+}
+
+}  // namespace
+
 
 // ============================================================================
 // OpenCirtConfig - Project Configuration
@@ -353,26 +414,30 @@ void OpenCirtTab::onPhase1PollTimer() {
             }
             
             if (!missingRefs.isEmpty()) {
-                QString msg = QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in GA_FL_VORLAGE.ods:\n\n")
-                              .arg(missingRefs.size());
-                for (const QString& ref : missingRefs) {
-                    msg += QString("  %1  (in: %2)\n")
-                           .arg(ref, missingPerDrawing[ref].join(", "));
+                QStringList sortedRefs(missingRefs.begin(), missingRefs.end());
+                sortedRefs.sort();
+
+                QStringList entries;
+                for (const QString& ref : sortedRefs) {
+                    entries << QString("%1  (in: %2)")
+                               .arg(ref, missingPerDrawing[ref].join(", "));
                 }
-                msg += "\nBetroffene Datenpunkte werden mit 0 belegt und mit [!REF] markiert.\n"
-                       "Fortfahren?";
-                
+
                 logError(QString("%1 fehlende DP-Referenz(en) in GA_FL_VORLAGE.ods").arg(missingRefs.size()));
-                for (const QString& ref : missingRefs) {
-                    logError(QString("  Fehlend: %1 (in: %2)")
-                             .arg(ref, missingPerDrawing[ref].join(", ")));
+                for (const QString& e : entries) {
+                    logError("  Fehlend: " + e);
                 }
-                
-                QMessageBox::StandardButton reply = QMessageBox::warning(
-                    this, "Fehlende DP-Referenzen", msg,
-                    QMessageBox::Yes | QMessageBox::Cancel);
-                
-                if (reply != QMessageBox::Yes) {
+
+                const bool weiter = showListWarning(
+                    this, "Fehlende DP-Referenzen",
+                    QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in "
+                            "GA_FL_VORLAGE.ods:").arg(missingRefs.size()),
+                    entries,
+                    "Betroffene Datenpunkte werden mit 0 belegt und mit [!REF] "
+                    "markiert.\n\nFortfahren?",
+                    true);
+
+                if (!weiter) {
                     logError("Abbruch durch Benutzer (fehlende DP-Referenzen)");
                     m_gaFlPhase = GaFlPhase::Idle;
                     m_fullProjectMode = false;
@@ -437,10 +502,6 @@ void OpenCirtTab::onPhase1PollTimer() {
     }
 
 
-    // Fehlende DP-Referenzen per Alert melden (nach allen GA-FL-Dateien)
-    combinedScr += "; === Fehlende Referenzen pruefen ===\n";
-    combinedScr += "(progn (vl-catch-all-apply 'oc-fl-show-missing-refs nil)(princ))\n";
-    
     // Restore system variables
     combinedScr += "; === Cleanup ===\n";
     combinedScr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
@@ -1882,13 +1943,13 @@ void OpenCirtTab::onDatenpunktExport() {
                  .arg(mehrfachBelegung.size()));
         for (const QString& m : mehrfachBelegung) logError("  " + m);
 
-        QMessageBox::warning(this, "Datenpunkte exportieren",
-            QString("Achtung: Es wurden IOs mit Eintraegen > 1 gefunden.\n\n"
-                    "Ein Datenpunkt traegt genau ein AKS/BAS und belegt daher "
-                    "genau einen Kanal. Ein Referenzwert groesser 1 ist ein "
-                    "Pflegefehler in GA_FL_VORLAGE.ods.\n\n"
-                    "Betroffen (AKS / Referenz: Typ = Wert):\n%1")
-            .arg(mehrfachBelegung.join("\n")));
+        showListWarning(this, "Datenpunkte exportieren",
+                        "Achtung: Es wurden IOs mit Eintraegen > 1 gefunden.\n\n"
+                        "Ein Datenpunkt traegt genau ein AKS/BAS und belegt daher "
+                        "genau einen Kanal. Ein Referenzwert groesser 1 ist ein "
+                        "Pflegefehler in GA_FL_VORLAGE.ods.\n\n"
+                        "Betroffen (AKS / Referenz: Typ = Wert):",
+                        mehrfachBelegung);
     }
 
     QMessageBox::information(this, "Datenpunkte exportieren",

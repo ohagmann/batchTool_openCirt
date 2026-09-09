@@ -266,7 +266,7 @@ private:
     // Store scanned layers for use in dialogs
     QStringList m_scannedLayers;
     
-    // OpenCirt Tab
+    // openCirt Tab
     OpenCirtTab* m_openCirtTab;
     
     // LISP Tab (cleaned for v5.1 in-process architecture)

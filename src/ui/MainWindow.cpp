@@ -1170,13 +1170,13 @@ QWidget* MainWindow::createLispTab() {
 }
 
 // ============================================================================
-// OpenCirt Tab Creation
+// openCirt Tab Creation
 // ============================================================================
 
 QWidget* MainWindow::createOpenCirtTab() {
     m_openCirtTab = new OpenCirtTab(this);
     
-    // Connect log messages from OpenCirt to main log
+    // Connect log messages from openCirt to main log
     connect(m_openCirtTab, &OpenCirtTab::logMessage,
             this, [this](const QString& msg, const QString& type) {
         logMessage(msg, type);
@@ -1191,12 +1191,12 @@ QWidget* MainWindow::createOpenCirtTab() {
     });
 
     // Sync project root from General tab folder
-    // The folder edit is already connected - we update OpenCirt when it changes
+    // The folder edit is already connected - we update openCirt when it changes
     if (m_folderEdit && !m_folderEdit->text().isEmpty()) {
         m_openCirtTab->setProjectRoot(m_folderEdit->text());
     }
     
-    // Connect folder changes to OpenCirt tab
+    // Connect folder changes to openCirt tab
     connect(m_folderEdit, &QLineEdit::textChanged,
             m_openCirtTab, &OpenCirtTab::setProjectRoot);
     
@@ -1212,9 +1212,9 @@ void MainWindow::connectSignals() {
     connect(m_startButton, &QPushButton::clicked, this, &MainWindow::onStartProcessing);
     connect(m_stopButton, &QPushButton::clicked, this, &MainWindow::onStopProcessing);
     
-    // Hide Start/Stop buttons when OpenCirt tab is active (it has its own buttons)
+    // Hide Start/Stop buttons when openCirt tab is active (it has its own buttons)
     connect(m_tabWidget, &QTabWidget::currentChanged, this, [this](int index) {
-        bool isOpenCirt = (index == m_tabWidget->count() - 1); // OpenCirt is last tab
+        bool isOpenCirt = (index == m_tabWidget->count() - 1); // openCirt is last tab
         m_startButton->setVisible(!isOpenCirt);
         m_stopButton->setVisible(!isOpenCirt);
     });

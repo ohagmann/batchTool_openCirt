@@ -1,11 +1,20 @@
-# Changelog
+﻿# Changelog
 
-Alle wesentlichen Änderungen am Batchtool / OpenCirt Plugin werden in dieser Datei dokumentiert.
+Alle wesentlichen Änderungen am Batchtool / openCirt Plugin werden in dieser Datei dokumentiert.
 
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei reinen Änderungen an Vorlagen, LISP-Skripten, Dokumentation oder Repo-Konfiguration.
 
 ## [Unreleased]
+
+## [1.4.2] – 2026-09-09
+
+### Fixed
+- **Sammelmeldungen sind wieder quittierbar.** Die Warnungen über fehlende Datenpunkt-Referenzen und über Referenzwerte größer 1 setzten ihre Einträge zu einem einzigen Text zusammen und zeigten ihn in einer `QMessageBox`. Die wächst mit ihrem Inhalt und lässt sich nicht verkleinern – bei vielen Einträgen rutschten die Schaltflächen unter den Bildschirmrand und der Dialog ließ sich nicht mehr schließen. Beide Meldungen laufen jetzt über einen skalierbaren Dialog mit scrollbarer Liste und Größengriff; die Schaltflächen bleiben unabhängig von der Zahl der Einträge erreichbar. Die fehlenden Referenzen werden zusätzlich sortiert ausgegeben statt in der Reihenfolge des `QSet`
+
+### Changed
+- **Der Alert am Ende des Gesamtlaufs entfällt.** Nach dem Durchlauf meldete `oc-fl-show-missing-refs` dieselben fehlenden Referenzen ein zweites Mal per LISP-`alert` – mit demselben Größenproblem und ohne zusätzlichen Inhalt gegenüber der Vorabprüfung, die zu jeder Referenz auch die betroffenen Zeichnungen nennt. Der Aufruf ist aus dem Gesamtlauf-SCR entfernt; die Funktion bleibt in `FillGaFl.lsp` erhalten, der Logeintrag ebenfalls
+- **Schreibweise „openCirt" durchgängig.** In Dokumentation, Lizenztexten und Quelltextkommentaren stand überwiegend „OpenCirt". Bezeichner sind unverändert: `OpenCirtTab`, `OpenCirtConfig`, `OPENCIRT_VERSION`, `opencirt_config.json` und der Temp-Ordner `OpenCirt_extract`
 
 ## [1.4.1] – 2026-09-02
 
@@ -53,7 +62,7 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 ### Changed
 - **Oberfläche folgt BricsCADs Hell-/Dunkeleinstellung.** Maßgeblich ist die Systemvariable `COLORTHEME`, gelesen bei jedem Aufruf von `BATCHTOOL` – nach einem Themenwechsel genügt Schließen und erneutes Öffnen. Der Stil ist jetzt Fusion: der auf Windows 11 voreingestellte Qt-Stil zeichnet Flächen und abgerundete Ecken selbst und ignoriert die Palette, weshalb dort weder ein dunkles Thema noch BricsCADs eckige Optik möglich wäre
 - Keine fest verdrahteten Farbwerte mehr in der Oberfläche. Beschriftungen tragen eine Rolle (`Muted`, `Success`, `Warning`, `ErrorBold` …), die beim Themenwechsel neu berechnet wird; bisher waren die Farben für ein helles Thema geschrieben und auf dunklem Grund kaum lesbar
-- Der OpenCirt-Tab führt kein eigenes Protokoll mehr. Meldungen liefen bisher doppelt – einmal im Tab, einmal im *Processing Log* –, was rund die halbe Fensterhöhe für denselben Text verbrauchte und unter dem Protokollkasten einen leeren Streifen hinterließ. Das *Processing Log* ist jetzt die einzige Ansicht, ohne Höhenbegrenzung und mit fester Beteiligung an der Fensterhöhe
+- Der openCirt-Tab führt kein eigenes Protokoll mehr. Meldungen liefen bisher doppelt – einmal im Tab, einmal im *Processing Log* –, was rund die halbe Fensterhöhe für denselben Text verbrauchte und unter dem Protokollkasten einen leeren Streifen hinterließ. Das *Processing Log* ist jetzt die einzige Ansicht, ohne Höhenbegrenzung und mit fester Beteiligung an der Fensterhöhe
 - Das *Processing Log* färbt Meldungen nach Art ein (Fehler, Warnung, Erfolg). Das konnte bisher nur das entfallene Tab-Protokoll
 - Trenner zwischen den Schaltflächengruppen ist ein echtes `QFrame` statt eines leeren `QLabel` mit Rahmen, das auf dunklem Grund unsichtbar blieb
 
@@ -81,7 +90,7 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ### Changed
 - `Deckblatt_B` (`0000 Projekt_Deckblatt_B.dwg`) wird nicht mehr erzeugt. Das Aufräumen bestehender Dateien bleibt erhalten, damit Altbestände beim nächsten Lauf verschwinden. `0000 Projekt_Deckblatt_A.dwg` bleibt wie bisher unangetastet
-- OpenCirt-Tab aufgeräumt: die Schaltflächen *Plankopf-Daten setzen*, *Deckblätter erstellen*, *BMK erstellen*, *BAS erstellen*, *GA-FL erstellen* und *Textbreiten anpassen* entfallen. Alle sechs Schritte laufen als Teil von *Projekt erstellen*
+- openCirt-Tab aufgeräumt: die Schaltflächen *Plankopf-Daten setzen*, *Deckblätter erstellen*, *BMK erstellen*, *BAS erstellen*, *GA-FL erstellen* und *Textbreiten anpassen* entfallen. Alle sechs Schritte laufen als Teil von *Projekt erstellen*
 - Reihenfolge der verbliebenen Schaltflächen nach Wichtigkeit im Arbeitsablauf: *Projekt erstellen*, *Projekt bereinigen*, dann getrennt durch eine Linie die Ausgaben *PDF publizieren*, *IO-Liste erstellen*, *Sensorliste erstellen*
 - Reservezeilen der IO-Liste führen jetzt den ASP mit — der Klemmenplatz ist physisch vorhanden und einem Automationsschwerpunkt zugeordnet, auch wenn kein Datenpunkt darauf liegt. Anlage, BMK, BAS und Integrationsart bleiben leer
 - *IO-Belegung erstellen* heißt jetzt *IO-Liste erstellen* und deckt über den Filter beide Anwendungsfälle ab. Der Ausgabename richtet sich nach dem Filter: `IO-Belegungsliste.ods` bei reinem HW-Filter, sonst `Datenpunktliste[_<Filter>].ods`
@@ -111,6 +120,6 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 - **Attributes-Tab**: Blockattribute ändern (Filter nach Block, Tag, Sichtbarkeit)
 - **Layers-Tab**: Layer löschen, umbenennen, einfrieren, Farbe/Linientyp/Transparenz ändern, Layer-Analyse
 - **LISP-Tab**: Automatisierte LISP-Skript-Ausführung auf beliebig viele DWG-Dateien via SCR
-- **OpenCirt-Tab**: GA-Planungsautomatisierung (Plankopf, BMK-Nummerierung, BAS-Generierung, GA-FL, Summenblätter, Deckblatt, Inhaltsverzeichnis, PDF-Publish)
+- **openCirt-Tab**: GA-Planungsautomatisierung (Plankopf, BMK-Nummerierung, BAS-Generierung, GA-FL, Summenblätter, Deckblatt, Inhaltsverzeichnis, PDF-Publish)
 - Sample-Projekt mit Vorlagen, Blockbibliothek, LISP-Skripten und Bedienungsanleitung
 - Lizenz: BSL 1.1 (Licensor: Oliver Hagmann, Change Date: 2030-03-02, Change License: AGPLv3)
