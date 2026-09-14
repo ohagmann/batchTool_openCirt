@@ -7,6 +7,9 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+### Changed
+- **BmkNummerierung.lsp v2.3 – Steuerattribut `BMK_NUMMERIERUNG`.** Der Modus (`NEUSTARTEN` / `FORTSETZEN`) wird jetzt bevorzugt aus dem Plankopf-Attribut `BMK_NUMMERIERUNG` gelesen. Nur wenn es fehlt oder leer ist, greift wie bisher `FREITEXT_05`, damit ältere Plankopf-Vorlagen weiter funktionieren. Die Konsole zeigt je Zeichnung, aus welchem Attribut der Modus stammt. Kein Plugin-Bump (reine LISP-/Doku-Änderung)
+
 ## [1.5.0] – 2026-09-09
 
 ### Changed

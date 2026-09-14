@@ -247,12 +247,14 @@ Die BMK-Nummerierung vergibt automatisch fortlaufende Betriebsmittelkennzeichen 
 - Zähler werden zwischen Zeichnungen weitergegeben (Datei `bmk_counters.tmp`).
 ### 6.2 Steuerung pro Zeichnung
 
-Das Plankopf-Attribut **FREITEXT_05** steuert den Modus:
+Das Plankopf-Attribut **BMK_NUMMERIERUNG** steuert den Modus. Ist es nicht vorhanden oder leer, wird ersatzweise **FREITEXT_05** ausgewertet (ältere Plankopf-Vorlagen). Ist `BMK_NUMMERIERUNG` befüllt, wird `FREITEXT_05` nicht mehr angesehen.
 
 | Wert | Verhalten |
 |---|---|
-| `NEUSTARTEN` (oder leer) | Zähler beginnen bei 01 |
+| `NEUSTARTEN` (oder beide Attribute leer) | Zähler beginnen bei 01 |
 | `FORTSETZEN` | Zähler aus vorheriger Zeichnung übernehmen |
+
+Die BricsCAD-Konsole zeigt je Zeichnung, aus welchem Attribut der Modus stammt, z.B. `Modus (BMK_NUMMERIERUNG): FORTSETZEN` oder `Modus (FREITEXT_05): NEUSTARTEN`.
 
 ### 6.3 Sperren einzelner Blöcke
 
@@ -466,7 +468,7 @@ Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. D
 | „BAS.csv nicht gefunden" | BAS.csv fehlt oder falsch benannt | Datei muss exakt `BAS.csv` heißen und in `01- Referenzen/` liegen |
 | „Referenz fehlt" / „GA-FL-Referenz nicht gefunden" | ODS-Datei fehlt oder leer | `GA_FL_VORLAGE.ods` in `01- Referenzen/` ablegen; der Lauf startet erst dann |
 | Keine Datenpunkte erkannt | OC_FL_AKTIV_n nicht gesetzt | Mindestens ein Datenpunkt muss aktiv sein (OC_FL_AKTIV_n = „ja") |
-| BMK-Nummern beginnen nicht bei 01 | FREITEXT_05 = FORTSETZEN | Auf „NEUSTARTEN" setzen oder bmk_counters.tmp löschen |
+| BMK-Nummern beginnen nicht bei 01 | BMK_NUMMERIERUNG (bzw. FREITEXT_05) = FORTSETZEN | Auf „NEUSTARTEN" setzen oder bmk_counters.tmp löschen |
 | Deckblatt zeigt „Projekt" statt Projektname | PR1 leer | In plankopfdaten.csv den Wert für PR1 eintragen |
 
 ### Attribut-Reihenfolge korrigieren

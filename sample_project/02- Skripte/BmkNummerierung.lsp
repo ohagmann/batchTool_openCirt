@@ -1,11 +1,12 @@
 ;;; =====================================================================
 ;;; BmkNummerierung.lsp - BMK Nummerierung für openCirt BatchProcessing
 ;;; =====================================================================
-;;; Version: 2.2 - OC_AKS_LOCK Attribut: gesperrte Blöcke nicht nummerieren
+;;; Version: 2.3 - Steuerattribut BMK_NUMMERIERUNG (bevorzugt), FREITEXT_05 als Fallback
+;;;          2.2 - OC_AKS_LOCK Attribut: gesperrte Blöcke nicht nummerieren
 ;;; 
 ;;; Änderungen gegenüber v1.0:
 ;;;   - Hauptfunktion: BmkNummerierung (ohne c: Prefix, aufrufbar aus SCR)
-;;;   - Steuerattribut: FREITEXT_05 statt BMK_NUMMERIERUNG
+;;;   - Steuerattribut: BMK_NUMMERIERUNG (ab v2.3 bevorzugt), sonst FREITEXT_05
 ;;;   - Modus-Werte: "NEUSTARTEN" / "FORTSETZEN"
 ;;;   - Sortierung: links→rechts, unten→oben (wie Spec v1.1)
 ;;;   - Zähler-Persistenz via bmk_counters.tmp im DWG-Verzeichnis
@@ -137,11 +138,13 @@
 )
 
 ;;; =====================================================================
-;;; BMK MODUS AUS PLANKOPF (FREITEXT_05)
+;;; BMK MODUS AUS PLANKOPF (BMK_NUMMERIERUNG, Fallback FREITEXT_05)
 ;;; =====================================================================
 
-(defun oc-get-bmk-mode (/ ss i ent attribs mode)
-  (setq mode "NEUSTARTEN")  ; Default
+;; Sucht ein Attribut in allen Bloecken der Zeichnung.
+;; Rueckgabe: getrimmter Wert (letzter nicht-leerer Treffer) oder nil.
+(defun oc-find-attr-in-drawing (attr-name / ss i ent attribs val result)
+  (setq result nil)
   (setq ss (ssget "X" '((0 . "INSERT"))))
   (if ss
     (progn
@@ -150,10 +153,10 @@
         (setq ent (ssname ss i))
         (setq attribs (oc-get-block-attributes ent))
         (foreach attr attribs
-          (if (= (strcase (cdr (assoc 2 attr))) "FREITEXT_05")
+          (if (= (strcase (cdr (assoc 2 attr))) attr-name)
             (progn
-              (setq mode (vl-string-trim " \t" (cdr (assoc 1 attr))))
-              (if (= (strlen mode) 0) (setq mode "NEUSTARTEN"))
+              (setq val (vl-string-trim " \t" (cdr (assoc 1 attr))))
+              (if (> (strlen val) 0) (setq result val))
             )
           )
         )
@@ -161,7 +164,20 @@
       )
     )
   )
-  (strcase mode)
+  result
+)
+
+;; Rueckgabe: (MODUS . QUELLATTRIBUT)
+;; BMK_NUMMERIERUNG hat Vorrang. Nur wenn es fehlt oder leer ist,
+;; wird FREITEXT_05 ausgewertet. Beides leer -> NEUSTARTEN.
+(defun oc-get-bmk-mode (/ val)
+  (cond
+    ((setq val (oc-find-attr-in-drawing "BMK_NUMMERIERUNG"))
+     (cons (strcase val) "BMK_NUMMERIERUNG"))
+    ((setq val (oc-find-attr-in-drawing "FREITEXT_05"))
+     (cons (strcase val) "FREITEXT_05"))
+    (T (cons "NEUSTARTEN" "Default"))
+  )
 )
 
 ;;; =====================================================================
@@ -302,7 +318,7 @@
 ;;; HAUPTFUNKTION (aufgerufen vom C++ Plugin via SCR)
 ;;; =====================================================================
 
-(defun BmkNummerierung (/ blocks sorted-blocks bmk-mode counter-file counters)
+(defun BmkNummerierung (/ blocks sorted-blocks mode-info bmk-mode counter-file counters)
   (princ "\n=== BMK Nummerierung gestartet ===")
 
   (setq blocks (oc-get-blocks-with-bmk))
@@ -312,9 +328,10 @@
     (progn
       (setq sorted-blocks (oc-sort-blocks-by-position blocks))
 
-      ;; Modus aus FREITEXT_05 lesen
-      (setq bmk-mode (oc-get-bmk-mode))
-      (princ (strcat "\n  Modus (FREITEXT_05): " bmk-mode))
+      ;; Modus lesen: BMK_NUMMERIERUNG bevorzugt, sonst FREITEXT_05
+      (setq mode-info (oc-get-bmk-mode))
+      (setq bmk-mode (car mode-info))
+      (princ (strcat "\n  Modus (" (cdr mode-info) "): " bmk-mode))
 
       ;; Zähler-Datei im DWG-Verzeichnis
       (setq counter-file (strcat (getvar "DWGPREFIX") "bmk_counters.tmp"))
@@ -390,5 +407,5 @@
 ;;; Interaktiver Befehl (optional, für manuellen Aufruf)
 (defun c:BmkNummerierung () (BmkNummerierung))
 
-(princ "\nBmkNummerierung.lsp geladen (v2.0)")
+(princ "\nBmkNummerierung.lsp geladen (v2.3)")
 (princ)
