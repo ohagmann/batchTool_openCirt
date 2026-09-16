@@ -185,7 +185,7 @@ Jedes openCirt-Symbol enthält folgende Attribute pro Datenpunkt (n = 1..20):
 | `OC_FL_AKTIV_n` | Datenpunkt n aktiv? | „ja" / „" (leer = inaktiv) |
 | `OC_REF_DP_n` | Referenzname für GA-FL-Vorlage (ODS-Lookup) | „MW_HW" |
 | `OC_FCODE_DP_n` | Funktionscode | „MW_01" |
-| `OC_INTEG_DP_n` | Integrationsart | „BACnet" |
+| `OC_INTEG_DP_n` | Integrationsart. Leer = Wert aus der GA-FL-Vorlage (Spalte C der Referenz); ein im Symbol gesetzter Wert hat Vorrang (Symbol > Referenz > leer) | „BACnet" / „virtuell" |
 | `OC_KOMMENTAR_DP_n` | Kommentar | „Zulufttemperatur" |
 | `OC_BAS_DP_n` | BAS-Adresse (wird automatisch generiert) | „BSP-ASP01-RLT-TKA-1000-TZU-01-MW_01" |
 

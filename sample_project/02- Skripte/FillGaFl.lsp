@@ -1,6 +1,11 @@
 ;;; =====================================================================
 ;;; FillGaFl.lsp - GA-Funktionsliste befüllen
 ;;; =====================================================================
+;;; Version: 1.5
+;;;   - Integrationsart: Wert aus dem Symbol (OC_INTEGRATIONSART_DP_n) hat
+;;;     Vorrang vor der Referenz-ODS (Spalte C). Bisher ueberschrieb die
+;;;     Referenz einen im Symbol gesetzten Wert (z.B. "virtuell" bei FG_HW).
+;;;     Regel jetzt: Symbol > Referenz > leer (analog zum Kommentar).
 ;;; Version: 1.4
 ;;;   - Performance: ATTRIB-Kette pro Block einmal gecacht (TAG . ename),
 ;;;     Lese-/Schreibzugriffe gehen ueber den Cache statt die Kette jedes
@@ -809,7 +814,11 @@
                           ""
                         )
                       )
-                      (if (and attr-val (> (strlen (vl-string-trim " " attr-val)) 0))
+                      ;; OC_INTEG: Symbolwert hat Vorrang - Referenz nur, wenn
+                      ;; im Symbol nichts gesetzt ist (Symbol > Referenz > leer)
+                      (if (and attr-val (> (strlen (vl-string-trim " " attr-val)) 0)
+                               (not (and (= func-base "OC_INTEG")
+                                         (> (strlen (vl-string-trim " " integ-dp)) 0))))
                         (oc-fl-write-attr gafl-ent attr-name attr-val)
                       )
                       (setq col-index (1+ col-index))
