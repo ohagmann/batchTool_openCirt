@@ -458,6 +458,7 @@ Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. D
 - **Backups:** Vor jedem Batch-Lauf (ACHTUNG NICHT openCirt Erzeugung!!) werden automatisch Backups erstellt (konfigurierbar im General-Tab). Trotzdem empfiehlt sich eine zusätzliche manuelle Sicherung.
 - **Nicht bedienen:** Während eines Batch-Laufs BricsCAD nicht manuell bedienen – die Verarbeitung läuft über SCR-Skripte in der aktuellen Instanz.
 - **Aktuelle Zeichnung:** Die aktuell geöffnete Zeichnung darf nicht in der Batch-Liste enthalten sein.
+- **Neustart vor dem Gesamtlauf:** BricsCAD vor jedem vollständigen Gesamtlauf beenden und neu starten. BricsCAD V26 gibt je geöffnetem Dokument GDI-Objekte nicht wieder frei; ein zweiter Lauf in derselben Sitzung stürzt ab (siehe „Bekannte Probleme" unten).
 
 ### Häufige Fehler
 
@@ -470,6 +471,11 @@ Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. D
 | Keine Datenpunkte erkannt | OC_FL_AKTIV_n nicht gesetzt | Mindestens ein Datenpunkt muss aktiv sein (OC_FL_AKTIV_n = „ja") |
 | BMK-Nummern beginnen nicht bei 01 | BMK_NUMMERIERUNG (bzw. FREITEXT_05) = FORTSETZEN | Auf „NEUSTARTEN" setzen oder bmk_counters.tmp löschen |
 | Deckblatt zeigt „Projekt" statt Projektname | PR1 leer | In plankopfdaten.csv den Wert für PR1 eintragen |
+| BricsCAD stürzt beim zweiten Gesamtlauf in derselben Sitzung ab („Fehler beim Ausführen von _open") | GDI-Objekt-Leck in BricsCAD V26 – Windows-Limit von 10.000 GDI-Objekten je Prozess überschritten | BricsCAD vor jedem Gesamtlauf neu starten; Details und Registry-Puffer in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) |
+
+### Bekannte Probleme
+
+Probleme, deren Ursache nicht im Plugin, sondern in BricsCAD oder Windows liegt, sind in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) im Repository beschrieben – derzeit das GDI-Objekt-Leck von BricsCAD V26: Beobachtung im Task-Manager, die Regel „BricsCAD vor jedem Gesamtlauf neu starten" und das optionale Anheben des Windows-Limits über den Registry-Wert `GDIProcessHandleQuota`.
 
 ### Attribut-Reihenfolge korrigieren
 

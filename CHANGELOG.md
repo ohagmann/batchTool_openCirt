@@ -7,6 +7,9 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ## [Unreleased]
 
+### Added
+- **`KNOWN_ISSUES.md` – GDI-Objekt-Leck in BricsCAD V26.** BricsCAD gibt je Öffnen und Schließen eines Dokuments rund zwei GDI-Objekte nicht wieder frei (reproduzierbar im leeren Profil ohne Add-ons, das Plugin ist unbeteiligt). Ein zweiter Gesamtlauf in derselben Sitzung überschreitet das Windows-Limit von 10.000 GDI-Objekten je Prozess und endet mit APPCRASH („Fehler beim Ausführen von _open"). Die neue Datei beschreibt Symptom, Ursache, die Beobachtung im Task-Manager, die Regel „BricsCAD vor jedem Gesamtlauf neu starten" und das optionale Anheben des Limits über den Registry-Wert `GDIProcessHandleQuota`. Bedienungsanleitung Abschnitt 12 verweist darauf. Kein Plugin-Bump (reine Doku-Änderung)
+
 ### Changed
 - **FillGaFl.lsp v1.5 – Integrationsart aus dem Symbol hat Vorrang.** Ein im Symbol gesetztes `OC_INTEGRATIONSART_DP_n` (z. B. `virtuell` bei einer Referenz, deren Vorgabe `HW` ist) wurde beim Befüllen der GA-FL von der Referenztabelle wieder überschrieben; das GA-FL-Blatt zeigte dann eine andere Integrationsart als das Automationsschema. Jetzt gilt wie beim Kommentar: Symbol > Referenz > leer. Kein Plugin-Bump (reine LISP-/Doku-Änderung)
 - **BmkNummerierung.lsp v2.3 – Steuerattribut `BMK_NUMMERIERUNG`.** Der Modus (`NEUSTARTEN` / `FORTSETZEN`) wird jetzt bevorzugt aus dem Plankopf-Attribut `BMK_NUMMERIERUNG` gelesen. Nur wenn es fehlt oder leer ist, greift wie bisher `FREITEXT_05`, damit ältere Plankopf-Vorlagen weiter funktionieren. Die Konsole zeigt je Zeichnung, aus welchem Attribut der Modus stammt. Kein Plugin-Bump (reine LISP-/Doku-Änderung)

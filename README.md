@@ -184,6 +184,7 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
 ```
 ├── CMakeLists.txt              Root-Build-Konfiguration
 ├── CLEAN_BUILD.bat             Build-Skript
+├── KNOWN_ISSUES.md             Bekannte Probleme in BricsCAD/Windows (GDI-Objekt-Leck)
 ├── LICENSE                     BSL 1.1 Lizenz
 ├── .gitignore
 ├── docs/
