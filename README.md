@@ -175,7 +175,7 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
   - *Summenblätter* – Gewerk-Summe, ASP-Summe, Los-Summe, Projekt-Summe sowie eine Gewerke-Auswertung je Los über alle ASPs
   - *Textbreiten* – Breitenfaktor in GA-FL- und Summenblättern korrigieren, auch für Werte innerhalb der GA-FL-Blockdefinition
 - **Projekt bereinigen** – temporäre Dateien und Backups im Zeichnungsordner löschen (`*.bak`, `*.dwl`, `*.dwl2`, `*.sv$`, `*.ac$`, `*.tmp`, `*.log`)
-- **PDF publizieren** – DSD-basierter Multi-Sheet-PDF-Export inkl. Inhaltsverzeichnis (21 Einträge pro Seite, Plankopf aus `plankopfdaten.csv`)
+- **PDF publizieren** – DSD-basierter Multi-Sheet-PDF-Export inkl. Inhaltsverzeichnis (22 Einträge pro Seite, Plankopf aus `plankopfdaten.csv`)
 - **IO-Liste erstellen** – ODS-Vorlagen-basierter Export (`OdsTemplateWriter`, Referenz: `iomodule.csv`). Im Dialog wird nach Integrationsart gefiltert (Attribut `OC_INTEGRATIONSART_DP_n`): leer = alle Datenpunkte, `HW` = SPS-/DDC-Belegungsliste mit Modul- und Kanalzuordnung, `BUS;SMI` = mehrere Arten. Die Integrationsart steht als eigene Spalte in der Liste; *Modul-Typ* wird nur für HW-Zeilen gefüllt
 - **Sensorliste erstellen** – Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`)
 
@@ -205,9 +205,13 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
 │   ├── 02- Skripte/            LISP-Skripte
 │   ├── 03- Blockbibliothek/    DWG-Blockvorlagen
 │   ├── 04- Vorlagen/
-│   │   ├── OC_VORLAGE_DIN_A2_V12.dwg
-│   │   ├── OC_VORLAGE_EINTRAG_INHALT_DIN_A2_V_4.dwg
+│   │   ├── OC_RSH_Plankopf_quer_V21.dwg
+│   │   ├── OC_VORLAGE_DIN_A0.dwg
+│   │   ├── OC_VORLAGE_DIN_A2_V14.dwg
+│   │   ├── OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg
+│   │   ├── OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg
 │   │   ├── OC_VORLAGE_GA_FL.dwg
+│   │   ├── VDI3814_GA_FL_V_1_0.dwg
 │   │   ├── OC_VORLAGE_IO_BELEGUNG_V_1.ods
 │   │   └── OC_VORLAGE_SENSORLISTE_V_1.ods
 │   ├── 05- Projekt Zeichnungen/

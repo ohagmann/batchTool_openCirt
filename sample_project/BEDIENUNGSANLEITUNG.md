@@ -87,10 +87,16 @@ Projektname/
 │   ├── 00- Vorlagensymbol/     Basis-Vorlage zum Erstellen eigener Symbole
 │   ├── 01- Pfeile/             Datenpunkt-Pfeile (AI, AO, BI, BO)
 │   └── ...                     Weitere Symbole (Ventilator, Meldung etc.)
-├── 04- Vorlagen/               DWG-Vorlagen
-│   ├── OC_VORLAGE_DIN_A2_V12.dwg           Rahmen/Plankopf DIN A2
+├── 04- Vorlagen/               DWG-Vorlagen (projektneutral, Plankopfdaten kommen aus plankopfdaten.csv)
+│   ├── OC_RSH_Plankopf_quer_V21.dwg        Plankopf-Block
+│   ├── OC_VORLAGE_DIN_A2_V14.dwg           Rahmen/Plankopf DIN A2 – Schema-Zeichnungen und Deckblätter (höchste V<n> gilt)
+│   ├── OC_VORLAGE_DIN_A0.dwg               Rahmen/Plankopf DIN A0
+│   ├── OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg  Inhaltsverzeichnis-Blatt inkl. Eintragsblock
+│   ├── OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg   Blatt Änderungshistorie
 │   ├── OC_VORLAGE_GA_FL.dwg                GA-FL Blattvorlage
-│   └── OC_VORLAGE_EINTRAG_INHALT_DIN_A2_V_4.dwg  Inhaltsverzeichnis-Block
+│   ├── VDI3814_GA_FL_V_1_0.dwg             GA-FL Block (Quelle der Funktionsliste)
+│   ├── OC_VORLAGE_IO_BELEGUNG_V_1.ods      Vorlage IO-Liste
+│   └── OC_VORLAGE_SENSORLISTE_V_1.ods      Vorlage Sensorliste
 ├── 05- Projekt Zeichnungen/    Hier entstehen die Zeichnungen
 │   └── 01 Los 1/
 │       └── 01 ASP01/
@@ -134,7 +140,7 @@ Die Nummerierung am Anfang (01, 02, ...) bestimmt die Sortierung, in allen Ebene
 
 ### 4.1 Neue Zeichnung anlegen
 
-1. Öffnen Sie die Vorlage `OC_VORLAGE_DIN_A2_V12.dwg` aus dem Ordner `04- Vorlagen/`.
+1. Öffnen Sie die Vorlage `OC_VORLAGE_DIN_A2_V14.dwg` aus dem Ordner `04- Vorlagen/`.
 2. Speichern Sie die Datei im passenden Ordner unter `05- Projekt Zeichnungen/`, z.B.:
    ```
    05- Projekt Zeichnungen/01 Los 1/01 ASP01/02 RLT/01 TKA-1000/00 Hauptanlage.dwg
@@ -387,7 +393,7 @@ Die Funktion „Deckblätter erstellen" erzeugt automatisch Deckblätter für je
 | Gewerk | `0000 RLT_Deckblatt.dwg` | Gewerk-Bezeichnung |
 | Anlage | `0000 TKA-1000_Deckblatt.dwg` | Anlagen-Kennung |
 
-Die Deckblätter werden aus der Vorlage `OC_VORLAGE_DIN_A2_V12.dwg` erzeugt. Der Layer „GA-Deckblatt" wird aufgetaut, Trennlinien-Layer werden eingefroren.
+Die Deckblätter werden aus der Vorlage `OC_VORLAGE_DIN_A2_V<n>.dwg` mit der höchsten Versionsnummer erzeugt (derzeit `OC_VORLAGE_DIN_A2_V14.dwg`). Der Layer „GA-Deckblatt" wird aufgetaut, Trennlinien-Layer werden eingefroren.
 
 ### 9.2 Ausführung
 
@@ -405,7 +411,7 @@ Das Inhaltsverzeichnis wird automatisch aus allen Zeichnungen im Projekt generie
 - Zeichnungsnummer
 - Seitenzahl
 
-Die Einträge werden als Blöcke (`OC_VORLAGE_EINTRAG_INHALT_DIN_A2_V_4.dwg`) eingefügt – 21 Einträge pro Seite, bei Bedarf werden automatisch weitere Seiten erzeugt.
+Grundlage ist die Blattvorlage `OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg`, die den Eintragsblock mit allen Zeilen bereits enthält – 22 Einträge pro Seite, bei Bedarf werden automatisch weitere Seiten erzeugt.
 
 ### 10.2 PDF-Publish
 
