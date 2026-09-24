@@ -5,7 +5,10 @@ Alle wesentlichen Änderungen am Batchtool / openCirt Plugin werden in dieser Da
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei reinen Änderungen an Vorlagen, LISP-Skripten, Dokumentation oder Repo-Konfiguration.
 
-## [Unreleased]
+## [1.5.1] - 2026-09-24
+
+### Changed
+- **Projektblätter auf der obersten Ebene.** Was direkt in `05- Projekt Zeichnungen` liegt (Projekt-Deckblatt, Revisionshistorie), ist ein Projektblatt und keine Quellzeichnung. Bisher entschied der Dateiname darüber (`0000 Projekt_Deckblatt…`, `_Deckblatt`, `_Inhalt_`); ein anders benanntes Blatt auf der obersten Ebene lief durch BMK, BAS, Extraktion und GA-FL, und das handgemachte Deckblatt bekam umgekehrt nie die Plankopf-Stammdaten. Jetzt gilt die Ebene: Der Gesamtlauf überspringt die oberste Ebene bei BMK, BAS, Extraktion und GA-FL, schreibt aber in Schritt 1.5 die Stammdaten aus `plankopfdaten.csv` (AN, AG, PR, ERSTELLER, ERSTELLDATUM) auch in diese Blätter. Vom Plugin erzeugte Blätter (Inhaltsverzeichnis, Summen) bleiben davon unberührt, sie versorgen sich selbst. Hintergrund: Projekt-Deckblatt und Revisionshistorie entstehen inzwischen aus der Erstellliste über projektneutrale Vorlagen, deren Plankopf leer ist
 
 ### Added
 - **`KNOWN_ISSUES.md` – GDI-Objekt-Leck in BricsCAD V26.** BricsCAD gibt je Öffnen und Schließen eines Dokuments rund zwei GDI-Objekte nicht wieder frei (reproduzierbar im leeren Profil ohne Add-ons, das Plugin ist unbeteiligt). Ein zweiter Gesamtlauf in derselben Sitzung überschreitet das Windows-Limit von 10.000 GDI-Objekten je Prozess und endet mit APPCRASH („Fehler beim Ausführen von _open"). Die neue Datei beschreibt Symptom, Ursache, die Beobachtung im Task-Manager, die Regel „BricsCAD vor jedem Gesamtlauf neu starten" und das optionale Anheben des Limits über den Registry-Wert `GDIProcessHandleQuota`. Bedienungsanleitung Abschnitt 12 verweist darauf. Kein Plugin-Bump (reine Doku-Änderung)

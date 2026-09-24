@@ -738,25 +738,58 @@ bool OpenCirtTab::validateProjectStructure(QStringList& errors) {
 QStringList OpenCirtTab::findProjectDwgs() {
     QStringList dwgFiles;
     QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    
+    const QString drawingsRootPath = QDir(drawingsDir).absolutePath();
+
     QDirIterator it(drawingsDir, QStringList() << "*.dwg", QDir::Files,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
         QString path = it.next();
-        // Skip GA-FL files and summary sheets (they are generated)
-        QString fileName = QFileInfo(path).fileName();
+        QFileInfo fi(path);
+
+        // Die oberste Ebene von '05- Projekt Zeichnungen' traegt nur
+        // Projektblaetter (Deckblatt, Revisionshistorie, Inhaltsverzeichnis,
+        // Summen), nie eine Quellzeichnung. Sie bekommen die Plankopf-Stammdaten
+        // (siehe findProjektblaetter), laufen aber nicht durch BMK, BAS,
+        // Extraktion und GA-FL. Die Regel haengt an der Ebene, nicht am
+        // Dateinamen - so sind die Namen der Projektblaetter frei waehlbar.
+        if (QString::compare(fi.absolutePath(), drawingsRootPath,
+                             Qt::CaseInsensitive) == 0) {
+            continue;
+        }
+
+        // Erzeugte Blaetter in den Unterordnern ueberspringen
+        QString fileName = fi.fileName();
         if (fileName.contains("_GA_FL_") || fileName.contains("_Summe_") ||
-            fileName.contains("_Deckblatt") || fileName.contains("_Inhalt_") ||
-            fileName.startsWith("0001 Projekt_Summe", Qt::CaseInsensitive) ||
-            fileName.startsWith("0000 Projekt_Deckblatt", Qt::CaseInsensitive) ||
-            fileName.startsWith("0000 Projekt_Inhalt", Qt::CaseInsensitive)) {
+            fileName.contains("_Deckblatt") || fileName.contains("_Inhalt_")) {
             continue;
         }
         dwgFiles << path;
     }
-    
+
     dwgFiles.sort(Qt::CaseInsensitive);
     return dwgFiles;
+}
+
+QStringList OpenCirtTab::findProjektblaetter() {
+    // Projektblaetter = DWGs direkt auf der obersten Ebene von
+    // '05- Projekt Zeichnungen' (Deckblatt_A, Revisionshistorie, ...). Sie
+    // entstehen aus projektneutralen Vorlagen, ihre Plankopf-Felder AN/AG/PR/
+    // ERSTELLER sind daher leer und werden im Gesamtlauf aus plankopfdaten.csv
+    // befuellt. Vom Plugin selbst erzeugte Blaetter (Inhalt, Summen) bekommen
+    // ihre Plankopfdaten in ihren eigenen Generatoren und bleiben hier aussen vor.
+    QStringList result;
+    QDir dir(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
+    const QStringList files = dir.entryList(QStringList() << "*.dwg", QDir::Files,
+                                            QDir::Name | QDir::IgnoreCase);
+    for (const QString& f : files) {
+        if (f.contains("_Inhalt_", Qt::CaseInsensitive) ||
+            f.contains("_Summe", Qt::CaseInsensitive) ||
+            f.contains("_GA_FL_", Qt::CaseInsensitive)) {
+            continue;
+        }
+        result << dir.absoluteFilePath(f);
+    }
+    return result;
 }
 
 QString OpenCirtTab::detectAspFromPath(const QString& dwgPath) {
@@ -1140,9 +1173,16 @@ void OpenCirtTab::onFullProjectGenerate() {
     // Build combined Phase 1 SCR
     QString combinedScr;
     
-    // Step 1.5: Plankopf-Stammdaten aus CSV (AG, AN, PR etc.)
+    // Step 1.5: Plankopf-Stammdaten aus CSV (AG, AN, PR etc.) - auch auf die
+    // Projektblaetter der obersten Ebene (Deckblatt_A, Revisionshistorie),
+    // die sonst keinen Schritt des Gesamtlaufs durchlaufen.
     log("Plankopf-Daten aus CSV setzen...");
-    QString plankopfCsvScr = generatePlankopfCsvScr(dwgFiles);
+    QStringList projektblaetter = findProjektblaetter();
+    if (!projektblaetter.isEmpty()) {
+        log(QString("%1 Projektblatt/-blaetter auf der obersten Ebene erhalten Plankopf-Daten")
+            .arg(projektblaetter.size()));
+    }
+    QString plankopfCsvScr = generatePlankopfCsvScr(dwgFiles + projektblaetter);
     if (!plankopfCsvScr.trimmed().isEmpty()) {
         combinedScr += "; === Plankopf-Stammdaten aus CSV ===\n";
         combinedScr += plankopfCsvScr;

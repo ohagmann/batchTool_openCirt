@@ -134,6 +134,8 @@ Los → ASP → Gewerk → Anlage
 **Wichtig:** Die Ordnernamen werden automatisch ausgewertet:
 Die Nummerierung am Anfang (01, 02, ...) bestimmt die Sortierung, in allen Ebenen.
 
+**Oberste Ebene = Projektblätter.** DWGs, die direkt in `05- Projekt Zeichnungen/` liegen (Projekt-Deckblatt, Revisionshistorie), gelten als Projektblätter, nicht als Quellzeichnungen: Sie erhalten im Gesamtlauf die Plankopf-Stammdaten aus `plankopfdaten.csv`, werden aber von BMK-Nummerierung, BAS-Generierung, Extraktion und GA-FL übersprungen. Der Dateiname ist dabei frei; ein Präfix `0000 ` sorgt dafür, dass sie im PDF vor Inhaltsverzeichnis und Summenblättern liegen.
+
 ---
 
 ## 4. Symbole einfügen und Zeichnungen erstellen
@@ -432,7 +434,7 @@ Im openCirt-Tab auf **„PDF Publish"** klicken. Inhaltsverzeichnis und PDF werd
 Die Funktion „Gesamtprojekt" führt alle Schritte in der korrekten Reihenfolge automatisch aus:
 
 1. Projektstruktur bereinigen (alte GA-FLs, Deckblätter, Inhaltsverzeichnisse löschen)
-2. Plankopf-Daten setzen (aus CSV)
+2. Plankopf-Daten setzen (aus CSV, einschließlich der Projektblätter auf der obersten Ebene)
 3. BMK-Nummerierung (optional, per Checkbox)
 4. BAS-Generierung (optional, per Checkbox)
 5. GA-FL Phase 1: Datenextraktion

@@ -206,8 +206,14 @@ private:
     /// Validate project structure (check required folders/files)
     bool validateProjectStructure(QStringList& errors);
     
-    /// Find all DWGs in project drawings folder (recursive)
+    /// Find all source DWGs in project drawings folder (recursive). Skips the
+    /// top level (project sheets, see findProjektblaetter) and generated sheets
     QStringList findProjectDwgs();
+
+    /// Projektblaetter: DWGs directly on the top level of '05- Projekt
+    /// Zeichnungen' (Deckblatt_A, Revisionshistorie). They receive the
+    /// Plankopf master data but are not source drawings
+    QStringList findProjektblaetter();
     
     /// Detect ASP from folder path (looks for "ASP" or "ISP" in folder name)
     QString detectAspFromPath(const QString& dwgPath);
