@@ -24,7 +24,9 @@
 #include "OpenCirtTab.h"
 #include "Theming.h"
 #include "../utils/SensorKeywordLoader.h"
-#include "../utils/OdsTemplateWriter.h"
+#include "../utils/CsvListWriter.h"
+#include "../core/ProjectBuilder.h"
+#include "../core/OpenCirtEngine.h"
 
 // Qt Headers
 #include <QVBoxLayout>
@@ -58,6 +60,10 @@
 #include <QTreeWidget>
 #include <QHeaderView>
 #include <QAbstractItemView>
+#include <QFileDialog>
+#include <QSettings>
+#include <QElapsedTimer>
+#include <QCryptographicHash>
 #include <functional>
 
 // BRX result codes
@@ -319,27 +325,10 @@ OpenCirtTab::OpenCirtTab(QWidget* parent)
     setupUi();
     updateButtonStates();
     
-    // Phase 1 completion polling timer
-    m_phase1Timer = new QTimer(this);
-    m_phase1Timer->setInterval(2000);  // Poll every 2 seconds
-    connect(m_phase1Timer, &QTimer::timeout, this, &OpenCirtTab::onPhase1PollTimer);
-    
-    // Publish: Inhalt completion polling timer
-    m_publishTimer = new QTimer(this);
-    m_publishTimer->setInterval(2000);
-    connect(m_publishTimer, &QTimer::timeout, this, &OpenCirtTab::onPublishPollTimer);
-    
     // PDF publish completion polling timer (marker-based, via /b batch instance)
     m_pdfDoneTimer = new QTimer(this);
     m_pdfDoneTimer->setInterval(2000);
     connect(m_pdfDoneTimer, &QTimer::timeout, this, &OpenCirtTab::onPdfDonePollTimer);
-
-    // Phase 3: startet, sobald das Phase-2-Skript beendet ist (CMDACTIVE = 0).
-    // Der Takt bestimmt nur, wie schnell das Plugin hinschaut - keine Obergrenze.
-    m_phase3StartTimer = new QTimer(this);
-    m_phase3StartTimer->setInterval(500);
-    connect(m_phase3StartTimer, &QTimer::timeout, this, &OpenCirtTab::onPhase3StartTimer);
-
 }
 
 void OpenCirtTab::setupUi() {
@@ -376,9 +365,9 @@ void OpenCirtTab::setupUi() {
         return btn;
     };
     
-    // Reihenfolge nach Wichtigkeit im taeglichen Arbeitsablauf:
-    // Projekt erstellen mit seinen Optionen, Trenner, Projekt bereinigen,
-    // Trenner, danach die Ausgaben.
+    // Reihenfolge wie im Arbeitsablauf: Projekt aufbauen (Quellzeichnungen aus
+    // der Erstellliste), Trenner, Projekt erstellen mit seinen Optionen,
+    // Trenner, Projekt bereinigen, Trenner, danach die Ausgaben.
     auto addSeparator = [&]() {
         buttonLayout->addSpacing(8);
         auto* separator = new QFrame();
@@ -387,6 +376,17 @@ void OpenCirtTab::setupUi() {
         buttonLayout->addWidget(separator);
         buttonLayout->addSpacing(4);
     };
+
+    m_btnProjektAufbau = createButtonRow(
+        "Projekt aufbauen",
+        "Quellzeichnungen aus der Erstellliste (CSV) neu aufbauen");
+    m_btnProjektAufbau->setToolTip(
+        "Kopiert die Vorlagen nach '05- Projekt Zeichnungen', sortiert sie nach\n"
+        "Los / ASP / Gewerk / Anlage ein und setzt die Attribute aus der Liste.\n"
+        "Nach der Auswahl der Erstellliste: Vorschau (aendert nichts) oder\n"
+        "echter Lauf mit Sicherheitsabfrage.");
+
+    addSeparator();
 
     m_btnFullProject = createButtonRow(
         "Projekt erstellen",
@@ -434,7 +434,7 @@ void OpenCirtTab::setupUi() {
         "IO-Liste erstellen",
         "Datenpunkte nach Integrationsart filtern, HW zusaetzlich auf Module verteilen");
     m_btnDpExport->setToolTip(
-        "Exportiert die extrahierten Datenpunkte in die ODS-Vorlage.\n"
+        "Exportiert die Datenpunkte der GA-FL-Blaetter als CSV-Datei.\n"
         "Im folgenden Dialog wird nach Integrationsart gefiltert:\n"
         "  leer  = alle Datenpunkte\n"
         "  HW    = nur Hardware (mit Modul-/Kanalzuordnung)\n"
@@ -442,7 +442,7 @@ void OpenCirtTab::setupUi() {
 
     m_btnSensorliste = createButtonRow(
         "Sensorliste erstellen",
-        "Fuehler/Sensoren aus GA-FL-Daten in ODS-Vorlage exportieren");
+        "Fuehler/Sensoren aus GA-FL-Daten als CSV-Datei exportieren");
 
     mainLayout->addWidget(buttonGroup);
     
@@ -464,16 +464,21 @@ void OpenCirtTab::setupUi() {
     connect(m_btnSensorliste, &QPushButton::clicked, this, &OpenCirtTab::onSensorListeGenerate);
     connect(m_btnDpExport, &QPushButton::clicked, this, &OpenCirtTab::onDatenpunktExport);
     connect(m_btnBereinigen, &QPushButton::clicked, this, &OpenCirtTab::onProjektBereinigen);
+    connect(m_btnProjektAufbau, &QPushButton::clicked, this, &OpenCirtTab::onProjektAufbauen);
 }
 
 void OpenCirtTab::onEnableToggled(bool enabled) {
-    m_btnPublish->setEnabled(enabled);
-    m_btnSensorliste->setEnabled(enabled);
-    m_btnDpExport->setEnabled(enabled);
-    m_btnFullProject->setEnabled(enabled);
-    m_btnBereinigen->setEnabled(enabled);
-    m_chkIncludeBmk->setEnabled(enabled);
-    m_chkIncludeBas->setEnabled(enabled);
+    // Waehrend eines Laufs bleibt alles gesperrt
+    const bool usable = enabled && !m_running;
+    m_enableCheck->setEnabled(!m_running);
+    m_btnProjektAufbau->setEnabled(usable);
+    m_btnPublish->setEnabled(usable);
+    m_btnSensorliste->setEnabled(usable);
+    m_btnDpExport->setEnabled(usable);
+    m_btnFullProject->setEnabled(usable);
+    m_btnBereinigen->setEnabled(usable);
+    m_chkIncludeBmk->setEnabled(usable);
+    m_chkIncludeBas->setEnabled(usable);
     
     if (enabled && !m_projectRoot.isEmpty()) {
         m_statusLabel->setText("Bereit");
@@ -488,152 +493,211 @@ void OpenCirtTab::onEnableToggled(bool enabled) {
 }
 
 // ============================================================================
-// Phase 1 Completion Polling
+// Laeufe ohne Editor: gemeinsame Helfer
 // ============================================================================
+//
+// Gesamtlauf und Inhaltsverzeichnis bearbeiten die Zeichnungen als
+// Side-Database (core/OpenCirtEngine). Ein Lauf ist damit ein gewoehnlicher
+// Funktionsaufruf - kein Skript, keine Markerdatei, kein Timer, der auf das
+// Ende eines Skripts wartet.
 
-void OpenCirtTab::onPhase1PollTimer() {
-    if (m_phase1MarkerPath.isEmpty()) {
-        m_phase1Timer->stop();
-        return;
-    }
-    
-    // Check if marker file exists (written by LISP at end of Phase 1 SCR)
-    if (!QFile::exists(m_phase1MarkerPath)) {
-        return;  // Still running, keep polling
-    }
-    
-    // Phase 1 complete!
-    m_phase1Timer->stop();
-    QFile::remove(m_phase1MarkerPath);
-    
-    logSuccess("Phase 1 abgeschlossen - starte Phase 2 automatisch...");
-    QApplication::processEvents();
-    
-    // Read extracted data
-    QStringList dwgFiles = findProjectDwgs();
-    QVector<SourceDrawingInfo> drawings = readExtractedData(dwgFiles);
-    
-    if (drawings.isEmpty()) {
-        logError("Keine extrahierten Datenpunkte gefunden.");
-        m_gaFlPhase = GaFlPhase::Idle;
-        m_fullProjectMode = false;
-        m_btnFullProject->setText("Projekt erstellen");
-        m_btnFullProject->setEnabled(true);
-        return;
-    }
-    
-    // === Vorab-Validierung: REF_DP gegen Referenz-CSV pruefen ===
-    {
-        QMap<QString, QVector<QString>> refData = readOdsReference();
-        if (refData.isEmpty()) {
-            logError("GA-FL-Referenz leer oder nicht lesbar - Abbruch");
-            QMessageBox::critical(this, "Referenz fehlt",
-                "Die Referenz GA_FL_VORLAGE.csv ist leer oder nicht lesbar.\n\n"
-                "Ohne sie koennen die GA-FL-Blaetter nicht befuellt werden. "
-                "Der Lauf wird abgebrochen.");
-            m_gaFlPhase = GaFlPhase::Idle;
-            m_fullProjectMode = false;
-            m_btnFullProject->setText("Projekt erstellen");
-            m_btnFullProject->setEnabled(true);
-            return;
-        }
+namespace {
 
-        QSet<QString> missingRefs;
-        QMap<QString, QStringList> missingPerDrawing;  // ref -> list of drawings
-        QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
-        
-        for (const SourceDrawingInfo& d : drawings) {
-            for (const DataPoint& dp : d.dataPoints) {
-                QString ref = dp.refDp.trimmed();
-                if (!ref.isEmpty() && !refData.contains(ref)) {
-                    missingRefs.insert(ref);
-                    missingPerDrawing[ref].append(drawingsRoot.relativeFilePath(d.filePath));
-                }
+/// Werte als Liste (TAG in Grossschreibung, Wert), nach Tag geordnet
+OcPairs pairsFromMap(const QMap<QString, QString>& values) {
+    OcPairs pairs;
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        pairs.append(qMakePair(it.key().toUpper(), it.value()));
+    }
+    return pairs;
+}
+
+/// ASP, Gewerk und Anlage fuer beide Schreibweisen der Tags
+/// (GEWERK/OC_GEWERK, ANLAGE/OC_ANLAGE). Leere Werte loeschen das Attribut.
+OcPairs hierarchiePairs(const QString& asp, const QString& gewerk, const QString& anlage) {
+    OcPairs pairs;
+    pairs << qMakePair(QStringLiteral("ASP"), asp)
+          << qMakePair(QStringLiteral("GEWERK"), gewerk)
+          << qMakePair(QStringLiteral("OC_GEWERK"), gewerk)
+          << qMakePair(QStringLiteral("ANLAGE"), anlage)
+          << qMakePair(QStringLiteral("OC_ANLAGE"), anlage);
+    return pairs;
+}
+
+/// Vorlage an ihr Ziel kopieren. Eine vorhandene Datei wird ersetzt, ein
+/// Schreibschutz der Vorlage nicht uebernommen.
+bool copyTemplate(const QString& source, const QString& target) {
+    if (QFile::exists(target)) {
+        QFile::setPermissions(target, QFile::permissions(target)
+                                      | QFile::WriteOwner | QFile::WriteUser);
+        if (!QFile::remove(target)) return false;
+    }
+    if (!QFile::copy(source, target)) return false;
+    QFile::setPermissions(target, QFile::permissions(target)
+                                  | QFile::WriteOwner | QFile::WriteUser);
+    return true;
+}
+
+}  // namespace
+
+bool OpenCirtTab::checkNoOpenDrawings(const QString& title) {
+    // Eine im Editor geoeffnete Zeichnung laesst sich nicht ersetzen. Frueher
+    // fiel das nicht auf, weil das Skript die Zeichnungen selbst im Editor
+    // oeffnete.
+    QStringList open;
+    const QString root =
+        QDir::fromNativeSeparators(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR)) + "/";
+    if (acDocManager) {
+        AcApDocumentIterator* it = acDocManager->newAcApDocumentIterator();
+        for (; it && !it->done(); it->step()) {
+            AcApDocument* doc = it->document();
+            if (!doc || !doc->fileName()) continue;
+            const QString path =
+                QDir::fromNativeSeparators(QString::fromWCharArray(doc->fileName()));
+            if (path.startsWith(root, Qt::CaseInsensitive)) {
+                open << QDir::toNativeSeparators(path);
             }
         }
-        
-        if (!missingRefs.isEmpty()) {
-            QStringList sortedRefs(missingRefs.begin(), missingRefs.end());
-            sortedRefs.sort();
+        delete it;
+    }
+    if (open.isEmpty()) return true;
 
-            QVector<WarningGroup> groups;
-            logError(QString("%1 fehlende DP-Referenz(en) in GA_FL_VORLAGE.ods").arg(missingRefs.size()));
-            for (const QString& ref : sortedRefs) {
-                QStringList dwgs = missingPerDrawing[ref];
-                dwgs.removeDuplicates();
-                dwgs.sort(Qt::CaseInsensitive);
-                groups.append({ref, dwgs});
-                logError(QString("  Fehlend: %1 (in: %2)").arg(ref, dwgs.join(", ")));
-            }
+    logError(QString("%1: %2 Zeichnung(en) des Projekts sind im Editor geoeffnet")
+             .arg(title).arg(open.size()));
+    showListWarning(this, title,
+        "Diese Zeichnungen des Projekts sind in BricsCAD geoeffnet:",
+        open,
+        "Geoeffnete Zeichnungen lassen sich nicht bearbeiten. Bitte schliessen "
+        "und den Lauf erneut starten. Es wurde nichts geaendert.");
+    return false;
+}
 
-            const bool weiter = showTreeWarning(
-                this, "Fehlende DP-Referenzen",
-                QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in "
-                        "GA_FL_VORLAGE.ods:").arg(missingRefs.size()),
-                groups, "Zeichnung",
-                "Betroffene Datenpunkte werden mit 0 belegt und mit [!REF] "
-                "markiert.\n\nFortfahren?",
-                true);
+void OpenCirtTab::beginRun(QPushButton* button, const QString& busyText) {
+    m_running = true;
+    OcEngine::beginBackupRun();
+    m_runButton = button;
+    m_runButtonText = button ? button->text() : QString();
+    if (button) button->setText(busyText);
+    onEnableToggled(m_enableCheck->isChecked());
 
-            if (!weiter) {
-                logError("Abbruch durch Benutzer (fehlende DP-Referenzen)");
-                m_gaFlPhase = GaFlPhase::Idle;
-                m_fullProjectMode = false;
-                m_btnFullProject->setText("Projekt erstellen");
-                m_btnFullProject->setEnabled(true);
-                return;
+    m_progressBar->setRange(0, 0);
+    m_progressBar->setVisible(true);
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+}
+
+void OpenCirtTab::beginPhase(const QString& label, int total) {
+    m_phaseLabel = label;
+    m_phaseTotal = total;
+    m_phaseDone = 0;
+    m_progressBar->setRange(0, qMax(total, 1));
+    m_progressBar->setValue(0);
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+}
+
+void OpenCirtTab::stepDone(const QString& fileName) {
+    // Waehrend des Laufs wird die Anzeige weiter gezeichnet, Eingaben bleiben
+    // liegen: niemand kann mitten im Lauf etwas anderes anstossen.
+    ++m_phaseDone;
+    m_progressBar->setValue(m_phaseDone);
+    emit statusMessage(QString("%1: %2 von %3 - %4")
+                       .arg(m_phaseLabel).arg(m_phaseDone).arg(m_phaseTotal).arg(fileName));
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+}
+
+void OpenCirtTab::endRun() {
+    // Extraktionsdaten gelten nur fuer den Lauf, der sie geschrieben hat
+    m_extractFresh = false;
+    emit statusMessage(QString());
+    m_progressBar->setVisible(false);
+    if (m_runButton) m_runButton->setText(m_runButtonText);
+    m_runButton = nullptr;
+    m_running = false;
+    onEnableToggled(m_enableCheck->isChecked());
+}
+
+bool OpenCirtTab::processDrawing(const QString& path, RunCounts& counts,
+                                 const std::function<void(OcDrawing&)>& work,
+                                 bool backup) {
+    OcDrawing dwg;
+    if (!dwg.open(path)) {
+        logError(QString("%1: %2").arg(QFileInfo(path).fileName(), dwg.lastError()));
+        ++counts.errors;
+        return false;
+    }
+    work(dwg);
+    if (!dwg.save(backup)) {
+        logError(QString("%1: %2").arg(QFileInfo(path).fileName(), dwg.lastError()));
+        ++counts.errors;
+        return false;
+    }
+    return true;
+}
+
+bool OpenCirtTab::processNewDrawing(const QString& path, RunCounts& counts,
+                                    const std::function<void(OcDrawing&)>& work) {
+    // Eben erst aus der Vorlage kopiert: es gibt keinen Stand, den eine
+    // Sicherungskopie bewahren koennte
+    return processDrawing(path, counts, work, false);
+}
+
+bool OpenCirtTab::confirmMissingReferences(const QVector<SourceDrawingInfo>& drawings) {
+    // Vorab-Validierung: REF_DP gegen die Referenz pruefen
+    QMap<QString, QVector<QString>> refData = readOdsReference();
+    if (refData.isEmpty()) {
+        logError("GA-FL-Referenz leer oder nicht lesbar - Abbruch");
+        QMessageBox::critical(this, "Referenz fehlt",
+            "Die Referenz GA_FL_VORLAGE.csv ist leer oder nicht lesbar.\n\n"
+            "Ohne sie koennen die GA-FL-Blaetter nicht befuellt werden. "
+            "Der Lauf wird abgebrochen.");
+        return false;
+    }
+
+    QSet<QString> missingRefs;
+    QMap<QString, QStringList> missingPerDrawing;  // ref -> list of drawings
+    QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
+
+    for (const SourceDrawingInfo& d : drawings) {
+        for (const DataPoint& dp : d.dataPoints) {
+            QString ref = dp.refDp.trimmed();
+            if (!ref.isEmpty() && !refData.contains(ref)) {
+                missingRefs.insert(ref);
+                missingPerDrawing[ref].append(drawingsRoot.relativeFilePath(d.filePath));
             }
         }
     }
-    
-    QString combinedScr;
-    
-    // GA-FL sheets per source drawing
-    log("GA-FL Erzeugung und Befuellung...");
-    combinedScr += "; === GA-FL Phase 2: Erzeugung ===\n";
-    // Reset fehlende-Referenzen-Liste fuer diesen Lauf
-    combinedScr += "(progn (setq *oc-missing-refs* nil)(princ))\n";
-    
-    // Alte Logdatei loeschen (wird pro Dokument neu via *oc-log-path* gesetzt)
-    {
-        QString logFilePath = m_extractTempDir + "/fillgafl_log.txt";
-        logFilePath.replace("\\", "/");
-        combinedScr += QString("; === Logdatei: %1 ===\n").arg(logFilePath);
-        combinedScr += QString("(progn (if (findfile \"%1\")(vl-file-delete \"%1\"))(princ))\n").arg(logFilePath);
-    }
-    
-    combinedScr += generateGaFlCreationScr(drawings);
-    
-    // Phase 3 (Summen, Textbreiten, Cleanup) haengt an der letzten Zeile dieses
-    // Skripts: OC_PHASE3_PREPARE liest die dann fertigen GA-FL-Blaetter, schreibt
-    // die Summen-CSVs und uebergibt das Phase-3-Skript an das Plugin, das es
-    // startet, sobald dieses Skript beendet ist (siehe onPhase3StartTimer).
-    // Derselbe Weg wie von Phase 1 nach Phase 2: Skriptende als Ausloeser,
-    // keine Obergrenze, unabhaengig von der Projektgroesse.
-    //
-    // Bewusst KEIN _.SCRIPT aus diesem Skript heraus: BricsCAD verschachtelt
-    // Skripte, und nach dem inneren Skript bleibt in der Ausgangszeichnung ein
-    // offener OEFFNEN-Prompt haengen, der den naechsten Befehl schluckt und das
-    // Cleanup unwirksam macht (Praxislauf 09/2026: PDF-Publish blieb haengen,
-    // FILEDIA blieb 0). Ein Skript auf einer Ebene endet sauber.
-    combinedScr += "; === Phase 3: Summen aus den fertigen GA-FL-Blaettern ===\n";
-    combinedScr += "OC_PHASE3_PREPARE\n";
-    
-    if (!combinedScr.trimmed().isEmpty()) {
-        QString desc = m_fullProjectMode ? "Projekt Phase 2" : "GA-FL Phase 2";
-        executeScrFile(combinedScr, desc);
-        logSuccess("Phase 2 gestartet - BricsCAD verarbeitet alle Schritte.");
+    if (missingRefs.isEmpty()) return true;
+
+    QStringList sortedRefs(missingRefs.begin(), missingRefs.end());
+    sortedRefs.sort();
+
+    QVector<WarningGroup> groups;
+    logError(QString("%1 fehlende DP-Referenz(en) in GA_FL_VORLAGE.ods").arg(missingRefs.size()));
+    for (const QString& ref : sortedRefs) {
+        QStringList dwgs = missingPerDrawing[ref];
+        dwgs.removeDuplicates();
+        dwgs.sort(Qt::CaseInsensitive);
+        groups.append({ref, dwgs});
+        logError(QString("  Fehlend: %1 (in: %2)").arg(ref, dwgs.join(", ")));
     }
 
-    // Reset state
-    m_gaFlPhase = GaFlPhase::Idle;
-    m_fullProjectMode = false;
-    m_btnFullProject->setText("Projekt erstellen");
-    m_btnFullProject->setEnabled(true);
+    const bool weiter = showTreeWarning(
+        this, "Fehlende DP-Referenzen",
+        QString("ACHTUNG: %1 Datenpunkt-Referenz(en) fehlen in "
+                "GA_FL_VORLAGE.ods:").arg(missingRefs.size()),
+        groups, "Zeichnung",
+        "Betroffene Datenpunkte werden mit 0 belegt und mit [!REF] "
+        "markiert.\n\nFortfahren?",
+        true);
+
+    if (!weiter) {
+        logError("Abbruch durch Benutzer (fehlende DP-Referenzen)");
+    }
+    return weiter;
 }
 
 void OpenCirtTab::updateButtonStates() {
-    bool enabled = m_enableCheck->isChecked() && !m_projectRoot.isEmpty();
+    bool enabled = m_enableCheck->isChecked() && !m_projectRoot.isEmpty() && !m_running;
+    m_btnProjektAufbau->setEnabled(enabled);
     m_btnPublish->setEnabled(enabled);
     m_btnSensorliste->setEnabled(enabled);
     m_btnDpExport->setEnabled(enabled);
@@ -651,6 +715,14 @@ bool OpenCirtTab::isEnabled() const {
 
 void OpenCirtTab::setProjectRoot(const QString& root) {
     m_projectRoot = root;
+    // Nichts aus dem vorigen Projekt mitnehmen
+    m_extractTempDir.clear();
+    m_extractPurpose.clear();
+    m_extractFresh = false;
+    m_plankopfCsvData.clear();
+    m_plankopfCsvPath.clear();
+    m_plankopfCsvStamp = QDateTime();
+    m_plankopfCsvSize = -1;
     updateButtonStates();
     
     if (!root.isEmpty()) {
@@ -839,17 +911,74 @@ QString OpenCirtTab::findLibreOffice() {
         return output.split("\n").first().trimmed();
     }
 #else
-    // Linux
+    // Linux: LibreOffice kommt aus dem Paket der Distribution, von
+    // libreoffice.org (/opt), als Flatpak oder als Snap. Wer es woanders
+    // liegen hat, nennt das Programm in OPENCIRT_LIBREOFFICE.
+    auto usable = [](const QString& p) {
+        const QFileInfo fi(p);
+        return fi.isFile() && fi.isExecutable();
+    };
+
+    const QString fromEnv = qEnvironmentVariable("OPENCIRT_LIBREOFFICE").trimmed();
+    if (!fromEnv.isEmpty()) {
+        if (usable(fromEnv)) return fromEnv;
+        log(QString("OPENCIRT_LIBREOFFICE zeigt auf kein ausfuehrbares Programm: %1")
+            .arg(fromEnv), "WARN");
+    }
+
     QStringList paths = {
         "/usr/bin/libreoffice",
         "/usr/bin/soffice",
-        "/snap/bin/libreoffice"
+        "/usr/local/bin/libreoffice",
+        "/usr/local/bin/soffice",
+        "/usr/lib64/libreoffice/program/soffice",
+        "/usr/lib/libreoffice/program/soffice"
     };
+    // Pakete von libreoffice.org: /opt/libreoffice<Version>, neueste zuerst
+    const QStringList optDirs = QDir("/opt").entryList(
+        QStringList() << "libreoffice*", QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Name | QDir::Reversed);
+    for (const QString& d : optDirs) {
+        paths << "/opt/" + d + "/program/soffice";
+    }
+    // Flatpak legt je Anwendung ein Startskript an - fuer den Benutzer oder
+    // fuer alle. Es nimmt dieselben Argumente wie soffice.
+    paths << QDir::homePath() + "/.local/share/flatpak/exports/bin/org.libreoffice.LibreOffice"
+          << "/var/lib/flatpak/exports/bin/org.libreoffice.LibreOffice"
+          << "/snap/bin/libreoffice";
     for (const QString& p : paths) {
-        if (QFileInfo::exists(p)) return p;
+        if (usable(p)) return p;
+    }
+
+    // Zuletzt der Suchpfad
+    for (const char* name : {"libreoffice", "soffice"}) {
+        const QString p = QStandardPaths::findExecutable(QString::fromLatin1(name));
+        if (!p.isEmpty()) return p;
     }
 #endif
     return QString();
+}
+
+QProcessEnvironment OpenCirtTab::externalToolEnvironment() {
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+#ifndef _WIN32
+    // BricsCAD stellt sein Programmverzeichnis vor den Bibliothekspfad. Ein
+    // fremdes Programm faende dort Bibliotheken, die nicht zu ihm passen.
+    const QString appDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    QStringList keep;
+    const QStringList parts = env.value("LD_LIBRARY_PATH").split(':', Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        const QString p = QDir::cleanPath(part);
+        if (p == appDir || p.startsWith(appDir + '/')) continue;
+        keep << part;
+    }
+    if (keep.isEmpty()) {
+        env.remove("LD_LIBRARY_PATH");
+    } else {
+        env.insert("LD_LIBRARY_PATH", keep.join(':'));
+    }
+#endif
+    return env;
 }
 
 QString OpenCirtTab::findExcel() {
@@ -868,21 +997,36 @@ QString OpenCirtTab::findExcel() {
 }
 
 bool OpenCirtTab::convertOdsToCSV(const QString& odsPath, const QString& csvPath) {
-    // IMPORTANT: Always delete existing CSV first (no caching!)
+    m_odsProblem.clear();
+
+    // Die bisherige CSV wird nie weiterverwendet (kein Caching). Sie bleibt
+    // aber liegen, bis die neue da ist: scheitert die Umwandlung, ist am
+    // Projekt nichts geaendert.
+    const QString kept = csvPath + ".vorher";
+    QFile::remove(kept);
+    const bool hadOld = QFile::exists(csvPath) && QFile::rename(csvPath, kept);
     if (QFile::exists(csvPath)) {
         QFile::remove(csvPath);
-        log(QString("Alte CSV geloescht: %1").arg(QFileInfo(csvPath).fileName()));
     }
-    
+    auto succeeded = [&](const QString& tool) {
+        QFile::remove(kept);
+        logSuccess(QString("ODS erfolgreich zu CSV konvertiert (%1)").arg(tool));
+        return true;
+    };
+
     QString outDir = QFileInfo(csvPath).absolutePath();
-    
+    QStringList problems;
+
     // Try LibreOffice first
     QString libreOffice = findLibreOffice();
     if (!libreOffice.isEmpty()) {
-        log(QString("Konvertiere ODS mit LibreOffice: %1").arg(QFileInfo(odsPath).fileName()));
-        
+        log(QString("Konvertiere ODS mit LibreOffice: %1 (%2)")
+            .arg(QFileInfo(odsPath).fileName(), QDir::toNativeSeparators(libreOffice)));
+
         QProcess proc;
         proc.setWorkingDirectory(outDir);
+        proc.setProcessEnvironment(externalToolEnvironment());
+        proc.setProcessChannelMode(QProcess::MergedChannels);
         QStringList args = {
             "--headless",
             "--convert-to", "csv",
@@ -890,25 +1034,61 @@ bool OpenCirtTab::convertOdsToCSV(const QString& odsPath, const QString& csvPath
             odsPath
         };
         proc.start(libreOffice, args);
-        
-        if (proc.waitForFinished(30000) && proc.exitCode() == 0) {
+
+        // Waehrend LibreOffice arbeitet, wird die Anzeige weiter gezeichnet
+        const int timeoutMs = 90000;
+        QString problem;
+        if (!proc.waitForStarted(15000)) {
+            problem = QString("laesst sich nicht starten (%1)").arg(proc.errorString());
+        } else {
+            QElapsedTimer waited;
+            waited.start();
+            while (!proc.waitForFinished(100)) {
+                if (proc.state() == QProcess::NotRunning) break;
+                if (waited.elapsed() > timeoutMs) {
+                    problem = QString("antwortet seit %1 s nicht").arg(timeoutMs / 1000);
+                    proc.kill();
+                    proc.waitForFinished(5000);
+                    break;
+                }
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+            if (problem.isEmpty()
+                && (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)) {
+                problem = QString("endet mit Fehler %1").arg(proc.exitCode());
+            }
+        }
+        const QString output = QString::fromLocal8Bit(proc.readAll()).trimmed();
+
+        if (problem.isEmpty()) {
             if (QFile::exists(csvPath)) {
-                logSuccess("ODS erfolgreich zu CSV konvertiert (LibreOffice)");
-                return true;
+                return succeeded("LibreOffice");
             }
             // LibreOffice might name the CSV differently
             QString baseName = QFileInfo(odsPath).completeBaseName();
             QString altCsv = outDir + "/" + baseName + ".csv";
             if (QFile::exists(altCsv) && altCsv != csvPath) {
                 QFile::rename(altCsv, csvPath);
-                logSuccess("ODS erfolgreich zu CSV konvertiert (LibreOffice)");
-                return true;
+                return succeeded("LibreOffice");
             }
+            problem = "hat keine CSV-Datei geschrieben";
         }
-        logError(QString("LibreOffice-Konvertierung fehlgeschlagen: %1")
-                 .arg(proc.readAllStandardError().trimmed()));
+        logError(QString("LibreOffice-Konvertierung fehlgeschlagen: LibreOffice %1").arg(problem));
+        if (!output.isEmpty()) {
+            logError(QString("  Ausgabe von LibreOffice: %1").arg(output.left(600)));
+        }
+        problems << QString("LibreOffice (%1) %2.")
+                    .arg(QDir::toNativeSeparators(libreOffice), problem);
+        if (!output.isEmpty()) {
+            problems << QString("Ausgabe von LibreOffice:\n%1").arg(output.left(600));
+        }
+        if (libreOffice.contains("flatpak", Qt::CaseInsensitive)) {
+            problems << QString("LibreOffice laeuft als Flatpak in einer Sandbox. Es braucht "
+                                "Zugriff auf den Projektordner (Berechtigung fuer das "
+                                "Dateisystem, z.B. ueber Flatseal).");
+        }
     }
-    
+
     // Fallback: Excel via PowerShell (Windows only)
 #ifdef _WIN32
     QString excel = findExcel();
@@ -933,91 +1113,44 @@ bool OpenCirtTab::convertOdsToCSV(const QString& odsPath, const QString& csvPath
         
         proc.start("powershell", QStringList() << "-Command" << psScript);
         if (proc.waitForFinished(60000) && QFile::exists(csvPath)) {
-            logSuccess("ODS erfolgreich zu CSV konvertiert (Excel)");
-            return true;
+            return succeeded("Excel");
         }
         logError("Excel-Konvertierung fehlgeschlagen");
+        problems << QString("Excel konnte die Datei nicht umwandeln.");
     }
 #endif
-    
-    logError("ODS-Konvertierung fehlgeschlagen: Weder LibreOffice noch Excel gefunden");
-    return false;
-}
 
-// ============================================================================
-// SCR Execution
-// ============================================================================
-
-QString OpenCirtTab::writeScrToTempFile(const QString& content, const QString& name) {
-    QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QString dirName = QString("OpenCirt_%1").arg(QDateTime::currentMSecsSinceEpoch());
-    QString fullDir = tempPath + "/" + dirName;
-    
-    QDir().mkpath(fullDir);
-    
-    QString scrPath = fullDir + "/" + name + ".scr";
-    QFile file(scrPath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        logError(QString("SCR-Datei konnte nicht geschrieben werden: %1").arg(scrPath));
-        return QString();
+    // Nichts hat geklappt: den Stand von vorher wiederherstellen
+    QFile::remove(csvPath);
+    if (hadOld) {
+        QFile::rename(kept, csvPath);
     }
-    
-    QTextStream stream(&file);
-    stream << content;
-    file.close();
-    
-    return scrPath;
-}
 
-bool OpenCirtTab::executeScrFile(const QString& scrContent, const QString& description) {
-    QString scrPath = writeScrToTempFile(scrContent, description);
-    if (scrPath.isEmpty()) return false;
-    
-    log(QString("Starte %1...").arg(description));
-    
-    // Set system variables for batch mode
-    struct resbuf rb;
-    rb.restype = RTSHORT;
-    
-    rb.resval.rint = 0;
-    acedSetVar(_T("FILEDIA"), &rb);
-    rb.resval.rint = 0;
-    acedSetVar(_T("CMDECHO"), &rb);
-    rb.resval.rint = 5;
-    acedSetVar(_T("EXPERT"), &rb);
-    
-    // Execute _.SCRIPT
-    QString path = scrPath;
-    path.replace("\\", "/");
-    
-#ifdef _UNICODE
-    int rc = acedCommand(
-        RTSTR, _T("_.SCRIPT"),
-        RTSTR, path.toStdWString().c_str(),
-        RTNONE
-    );
+    if (problems.isEmpty()) {
+#ifdef _WIN32
+        logError("ODS-Konvertierung fehlgeschlagen: Weder LibreOffice noch Excel gefunden");
+        m_odsProblem = QString(
+            "Weder LibreOffice noch Excel wurden gefunden.\n\n"
+            "Das Plugin wandelt die Referenz %1 mit LibreOffice (ersatzweise Excel) "
+            "in eine CSV-Datei um. Bitte LibreOffice installieren.")
+            .arg(QFileInfo(odsPath).fileName());
 #else
-    int rc = acedCommand(
-        RTSTR, _T("_.SCRIPT"),
-        RTSTR, path.toLocal8Bit().constData(),
-        RTNONE
-    );
+        logError("ODS-Konvertierung fehlgeschlagen: LibreOffice nicht gefunden");
+        m_odsProblem = QString(
+            "LibreOffice wurde nicht gefunden.\n\n"
+            "Das Plugin wandelt die Referenz %1 mit LibreOffice in eine CSV-Datei um. "
+            "Gesucht wurde in /usr/bin, /usr/local/bin, /usr/lib64, /usr/lib und /opt, "
+            "als Flatpak (org.libreoffice.LibreOffice), als Snap und im Suchpfad.\n\n"
+            "Bitte LibreOffice installieren oder das Programm in der "
+            "Umgebungsvariablen OPENCIRT_LIBREOFFICE nennen.")
+            .arg(QFileInfo(odsPath).fileName());
 #endif
-    
-    if (rc != RTNORM) {
-        logError(QString("_.SCRIPT fehlgeschlagen (Code: %1)").arg(rc));
-        // Restore system variables
-        rb.resval.rint = 1;
-        acedSetVar(_T("FILEDIA"), &rb);
-        rb.resval.rint = 1;
-        acedSetVar(_T("CMDECHO"), &rb);
-        rb.resval.rint = 0;
-        acedSetVar(_T("EXPERT"), &rb);
-        return false;
+    } else {
+        logError("ODS-Konvertierung fehlgeschlagen");
+        m_odsProblem = QString("Die Referenz %1 liess sich nicht in eine CSV-Datei umwandeln.\n\n%2")
+            .arg(QFileInfo(odsPath).fileName(), problems.join("\n\n"));
     }
-    
-    logSuccess(QString("%1 gestartet - BricsCAD verarbeitet...").arg(description));
-    return true;
+    return false;
 }
 
 // ============================================================================
@@ -1030,72 +1163,12 @@ void OpenCirtTab::log(const QString& message, const QString& type) {
     emit logMessage(message, type);
 }
 
-// Platform-specific LISP for save+close (VLA on Windows, command on Linux)
-QString OpenCirtTab::lispSave() {
-#ifdef _WIN32
-    return "(progn (vla-save (vla-get-ActiveDocument (vlax-get-acad-object)))(princ))\n";
-#else
-    return "(progn (command \"_.QSAVE\")(princ))\n";
-#endif
-}
-
-QString OpenCirtTab::lispClose() {
-#ifdef _WIN32
-    return "(progn (vla-close (vla-get-ActiveDocument (vlax-get-acad-object)) :vlax-false)(princ))\n";
-#else
-    return "(progn (command \"_.CLOSE\")(princ))\n";
-#endif
-}
-
 void OpenCirtTab::logError(const QString& message) {
     log(message, "ERROR");
 }
 
 void OpenCirtTab::logSuccess(const QString& message) {
     log(message, "SUCCESS");
-}
-
-// ============================================================================
-// BAS.csv Parser
-// ============================================================================
-
-QVector<OpenCirtTab::BasSegment> OpenCirtTab::parseBasCsv(const QString& csvPath) {
-    QVector<BasSegment> segments;
-    
-    QFile file(csvPath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        logError(QString("BAS.csv konnte nicht geoeffnet werden: %1").arg(csvPath));
-        return segments;
-    }
-    
-    QTextStream stream(&file);
-    stream.setEncoding(QStringConverter::Utf8);
-    
-    while (!stream.atEnd()) {
-        QString line = stream.readLine().trimmed();
-        if (line.isEmpty()) continue;
-        
-        BasSegment seg;
-        
-        // Check if line is a static string (in quotes)
-        if ((line.startsWith("\"") && line.endsWith("\"")) ||
-            (line.startsWith("'") && line.endsWith("'"))) {
-            seg.isStatic = true;
-            seg.value = line.mid(1, line.length() - 2); // Remove quotes
-            seg.isDpSuffix = false;
-        } else {
-            seg.isStatic = false;
-            seg.value = line;
-            // Check if attribute name ends with _DP (needs _n appended per datapoint)
-            seg.isDpSuffix = line.endsWith("_DP", Qt::CaseInsensitive);
-        }
-        
-        segments << seg;
-    }
-    
-    file.close();
-    log(QString("BAS.csv geladen: %1 Segmente").arg(segments.size()));
-    return segments;
 }
 
 // ============================================================================
@@ -1124,6 +1197,7 @@ void OpenCirtTab::onFullProjectGenerate() {
         return;
     }
 
+    if (!checkNoOpenDrawings("Projekt erstellen")) return;
 
     QMessageBox::StandardButton reply = QMessageBox::warning(this,
         "Projekt erstellen",
@@ -1131,7 +1205,7 @@ void OpenCirtTab::onFullProjectGenerate() {
         "ZIP-Archiv als Sicherungskopie.\n\n"
         "Schritte: Deckblaetter + BMK + BAS + Extraktion + GA-FL + Summen + Textbreiten\n"
         "Alle bestehenden *_Deckblatt.dwg, *_GA_FL_*.dwg und *_Summe*.dwg werden geloescht.\n\n"
-        "Phase 2 (Erzeugung) startet automatisch nach Abschluss der Extraktion.\n\nFortfahren?",
+        "Fortfahren?",
         QMessageBox::Yes | QMessageBox::Cancel);
     
     if (reply != QMessageBox::Yes) return;
@@ -1146,120 +1220,335 @@ void OpenCirtTab::onFullProjectGenerate() {
     }
     
     log(QString("%1 DWG-Dateien gefunden").arg(dwgFiles.size()));
-    
-    // Step 0: Cleanup
+
+    QElapsedTimer timer;
+    timer.start();
+
+    RunCounts counts;
+    beginRun(m_btnFullProject, "Projekt wird erstellt...");
+    const bool finished = runGesamtlauf(dwgFiles, counts);
+    endRun();
+
+    const qint64 seconds = timer.elapsed() / 1000;
+    const QString dauer = QString("%1:%2 min")
+        .arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
+
+    if (!finished) {
+        logError(QString("Projekt erstellen abgebrochen nach %1").arg(dauer));
+        return;
+    }
+
+    const QString summary = QString(
+        "Deckblaetter:  %1\n"
+        "Datenpunkte:  %2\n"
+        "GA-FL-Blaetter:  %3\n"
+        "Summenblaetter:  %4\n"
+        "Textbreiten angepasst:  %5\n"
+        "Fehler:  %6\n"
+        "Dauer:  %7")
+        .arg(counts.deckblaetter).arg(counts.datenpunkte).arg(counts.gaFl)
+        .arg(counts.summen).arg(counts.textbreiten).arg(counts.errors).arg(dauer);
+
+    if (counts.errors == 0) {
+        logSuccess(QString("Projekt erstellt in %1: %2 GA-FL-Blaetter, %3 Summenblaetter, "
+                           "%4 Deckblaetter")
+                   .arg(dauer).arg(counts.gaFl).arg(counts.summen).arg(counts.deckblaetter));
+        QMessageBox::information(this, "Projekt erstellen",
+            "Projekt erstellt.\n\n" + summary);
+    } else {
+        logError(QString("Projekt erstellt mit %1 Fehler(n) in %2 - siehe Protokoll")
+                 .arg(counts.errors).arg(dauer));
+        QMessageBox::warning(this, "Projekt erstellen",
+            "Projekt erstellt - es gab Fehler, bitte das Protokoll pruefen.\n\n" + summary);
+    }
+}
+
+QString OpenCirtTab::projectExtractDir(const QString& purpose) const {
+    // Die Kennung entsteht aus dem vollen Pfad: gleichnamige Projekte an
+    // verschiedenen Orten bekommen verschiedene Ordner
+    const QString root = QDir::cleanPath(QDir(m_projectRoot).absolutePath());
+#ifdef _WIN32
+    const QString key = root.toLower();
+#else
+    const QString key = root;
+#endif
+    const QString id = QString::fromLatin1(
+        QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex().left(10));
+
+    // Der Name dient nur dem Wiederfinden; kurz halten wegen der Pfadlaenge
+    QString name = QDir(root).dirName().left(24).trimmed();
+    name.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
+    if (name.isEmpty()) name = QStringLiteral("Projekt");
+
+    return QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+           + "/OpenCirt_extract/" + name + "_" + id
+           + (purpose.isEmpty() ? QString() : "_" + purpose);
+}
+
+bool OpenCirtTab::extractDirUsable() const {
+    return m_extractFresh && !m_projectRoot.isEmpty()
+           && m_extractTempDir == projectExtractDir(m_extractPurpose);
+}
+
+bool OpenCirtTab::resetExtractDir(const QString& purpose) {
+    m_extractFresh = false;
+    m_extractPurpose = purpose;
+    m_extractTempDir = projectExtractDir(purpose);
+
+    QDir dir(m_extractTempDir);
+    if (dir.exists() && !dir.removeRecursively()) {
+        logError(QString("Tempordner laesst sich nicht leeren: %1")
+                 .arg(QDir::toNativeSeparators(m_extractTempDir)));
+        QMessageBox::critical(this, "Tempordner",
+            QString("Der Ordner mit den Extraktionsdaten laesst sich nicht leeren:\n\n%1\n\n"
+                    "Vermutlich ist eine Datei daraus in einem anderen Programm geoeffnet. "
+                    "Mit alten Daten wird nicht gearbeitet - bitte die Datei schliessen "
+                    "und den Lauf erneut starten. Es wurde nichts geaendert.")
+            .arg(QDir::toNativeSeparators(m_extractTempDir)));
+        return false;
+    }
+    if (!QDir().mkpath(m_extractTempDir)) {
+        logError(QString("Tempordner laesst sich nicht anlegen: %1")
+                 .arg(QDir::toNativeSeparators(m_extractTempDir)));
+        QMessageBox::critical(this, "Tempordner",
+            QString("Der Ordner fuer die Extraktionsdaten laesst sich nicht anlegen:\n\n%1")
+            .arg(QDir::toNativeSeparators(m_extractTempDir)));
+        return false;
+    }
+
+    // Herkunft festhalten, zum Nachsehen
+    QFile origin(m_extractTempDir + "/projekt.txt");
+    if (origin.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&origin);
+        out.setEncoding(QStringConverter::Utf8);
+        out << "Projekt: " << QDir::toNativeSeparators(m_projectRoot) << "\n"
+            << "Erzeugt: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
+    }
+
+    m_extractFresh = true;
+    return true;
+}
+
+bool OpenCirtTab::extractDrawings(const QStringList& dwgFiles, const QString& purpose,
+                                  QStringList& unreadable) {
+    if (!resetExtractDir(purpose)) return false;
+
+    const QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
+    OcLogFile extractLog;
+    extractLog.open(m_extractTempDir + "/extractdp_log.txt", true);
+
+    beginPhase("Zeichnungen lesen", dwgFiles.size());
+    for (const QString& path : dwgFiles) {
+        const QString folder = QFileInfo(path).absolutePath();
+        const QString subDir = m_extractTempDir + "/" + drawingsRoot.relativeFilePath(folder);
+        QDir().mkpath(subDir);
+
+        OcDrawing dwg;
+        QString error;
+        if (!dwg.open(path, true)) {
+            error = dwg.lastError();
+        } else {
+            const OcExtractResult ex = dwg.extractDp(subDir, &extractLog);
+            if (!ex.ok) error = ex.error;
+        }
+        if (!error.isEmpty()) {
+            logError(QString("%1: %2").arg(QFileInfo(path).fileName(), error));
+            unreadable << QDir::toNativeSeparators(drawingsRoot.relativeFilePath(path));
+        }
+        stepDone(QFileInfo(path).fileName());
+    }
+    extractLog.close();
+    return true;
+}
+
+int OpenCirtTab::removeBmkCounters() {
+    int removed = 0;
+    QDirIterator it(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR),
+                    QStringList() << "bmk_counters.tmp",
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        if (QFile::remove(path)) {
+            ++removed;
+        } else {
+            log(QString("BMK-Zaehlerdatei nicht loeschbar: %1")
+                .arg(QDir::toNativeSeparators(path)), "WARN");
+        }
+    }
+    return removed;
+}
+
+bool OpenCirtTab::runGesamtlauf(const QStringList& dwgFiles, RunCounts& counts) {
+    const QDir drawingsRoot(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR));
+
+    // Vor allem anderen: scheitert es hier, ist am Projekt noch nichts geaendert
+    if (!resetExtractDir()) {
+        return false;
+    }
+
+    // Step 0: ODS conversion. Sie steht vor dem Cleanup: fehlt LibreOffice
+    // oder scheitert die Umwandlung, sind noch keine Blaetter geloescht.
+    log("ODS-Konvertierung...");
+    const QString odsPath = referencePath(OpenCirtConfig::GA_FL_VORLAGE_ODS);
+    const QString refCsvPath = referencePath("GA_FL_VORLAGE.csv");
+    if (!convertOdsToCSV(odsPath, refCsvPath)) {
+        logError("ODS-Konvertierung fehlgeschlagen - Abbruch");
+        QMessageBox::critical(this, "Referenz umwandeln",
+            m_odsProblem + "\n\nDer Lauf wurde abgebrochen. An den Zeichnungen wurde "
+                           "nichts geaendert.");
+        return false;
+    }
+
+    // Step 1: Cleanup
     log("Cleanup...");
     cleanupDeckblaetter();
     cleanupInhalt();
     cleanupGaFl();
-    
-    // Step 1: ODS conversion
-    log("ODS-Konvertierung...");
-    QString csvPath = referencePath("GA_FL_VORLAGE.csv");
-    if (!convertOdsToCSV(odsPath, csvPath)) {
-        logError("ODS-Konvertierung fehlgeschlagen - Abbruch");
-        return;
-    }
-    
-    // Set temp dir for extraction
-    m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                       + "/OpenCirt_extract";
-    QDir extractDir(m_extractTempDir);
-    if (extractDir.exists()) {
-        extractDir.removeRecursively();
-    }
-    QDir().mkpath(m_extractTempDir);
-    
-    // Build combined Phase 1 SCR
-    QString combinedScr;
-    
+
     // Step 1.5: Plankopf-Stammdaten aus CSV (AG, AN, PR etc.) - auch auf die
     // Projektblaetter der obersten Ebene (Deckblatt_A, Revisionshistorie),
     // die sonst keinen Schritt des Gesamtlaufs durchlaufen.
     log("Plankopf-Daten aus CSV setzen...");
-    QStringList projektblaetter = findProjektblaetter();
+    loadPlankopfCsv();
+    const OcPairs plankopfPairs = pairsFromMap(m_plankopfCsvData);
+
+    const QStringList projektblaetter = findProjektblaetter();
     if (!projektblaetter.isEmpty()) {
         log(QString("%1 Projektblatt/-blaetter auf der obersten Ebene erhalten Plankopf-Daten")
             .arg(projektblaetter.size()));
     }
-    QString plankopfCsvScr = generatePlankopfCsvScr(dwgFiles + projektblaetter);
-    if (!plankopfCsvScr.trimmed().isEmpty()) {
-        combinedScr += "; === Plankopf-Stammdaten aus CSV ===\n";
-        combinedScr += plankopfCsvScr;
+    if (!plankopfPairs.isEmpty()) {
+        beginPhase("Projektblaetter", projektblaetter.size());
+        for (const QString& path : projektblaetter) {
+            processDrawing(path, counts, [&](OcDrawing& dwg) {
+                dwg.setAttributes(plankopfPairs);
+            });
+            stepDone(QFileInfo(path).fileName());
+        }
     }
-    
+
     // Step 2: Deckblaetter
     log("Deckblaetter erzeugen...");
-    QString deckblattScr = generateDeckblattScr();
-    if (!deckblattScr.trimmed().isEmpty()) {
-        combinedScr += "; === Deckblaetter ===\n";
-        combinedScr += deckblattScr;
-    }
-    
-    // Step 2.5: Plankopf ASP/GEWERK/ANLAGE aus Ordnerhierarchie setzen
-    log("Plankopf-ASP aus Ordnerhierarchie setzen...");
-    QString aspScr = generatePlankopfAspScr(dwgFiles);
-    if (!aspScr.trimmed().isEmpty()) {
-        combinedScr += "; === Plankopf ASP aus Ordnerhierarchie ===\n";
-        combinedScr += aspScr;
-    }
-    
-    // Step 3: BMK (optional)
-    if (m_chkIncludeBmk->isChecked()) {
-        log("BMK-Nummerierung...");
-        QString lspPath = scriptsPath() + "/BmkNummerierung.lsp";
-        if (QFileInfo::exists(lspPath)) {
-            combinedScr += "; === BMK-Nummerierung ===\n";
-            combinedScr += generateBmkScr(dwgFiles);
-        } else {
-            logError("BmkNummerierung.lsp nicht gefunden - uebersprungen");
-        }
-    } else {
+    createDeckblaetter(counts);
+
+    // Steps 2.5 bis 5 je Quellzeichnung in einem Zug: Plankopf-Stammdaten,
+    // ASP/GEWERK/ANLAGE aus der Ordnerhierarchie, BMK, BAS, Extraktion.
+    // Frueher oeffnete jeder Schritt jede Zeichnung einzeln. Das Ergebnis ist
+    // dasselbe, weil kein Schritt auf einen spaeteren Schritt einer anderen
+    // Zeichnung zurueckgreift; die BMK-Zaehler laufen wie bisher in der
+    // Reihenfolge der Zeichnungen weiter.
+    const bool doBmk = m_chkIncludeBmk->isChecked();
+    bool doBas = m_chkIncludeBas->isChecked();
+    QVector<OcBasSegment> basSegments;
+    if (!doBmk) {
         log("BMK-Nummerierung uebersprungen (deaktiviert)");
     }
-    
-    // Step 4: BAS (optional)
-    if (m_chkIncludeBas->isChecked()) {
-        log("BAS-Generierung...");
-        QString lspPath = scriptsPath() + "/GenBas.lsp";
-        QString basCsv = referencePath(OpenCirtConfig::BAS_CSV);
-        if (QFileInfo::exists(lspPath) && QFileInfo::exists(basCsv)) {
-            combinedScr += "; === BAS-Generierung ===\n";
-            combinedScr += generateBasScr(dwgFiles);
+    if (doBas) {
+        bool found = false;
+        basSegments = OcEngine::parseBasCsv(referencePath(OpenCirtConfig::BAS_CSV), &found);
+        if (!found) {
+            logError("BAS.csv nicht gefunden - uebersprungen");
+            doBas = false;
+        } else if (basSegments.isEmpty()) {
+            logError("BAS.csv enthaelt keine Segmente - BAS-Generierung uebersprungen");
+            doBas = false;
         } else {
-            logError("GenBas.lsp oder BAS.csv nicht gefunden - uebersprungen");
+            log(QString("BAS.csv geladen: %1 Segmente").arg(basSegments.size()));
         }
     } else {
         log("BAS-Generierung uebersprungen (deaktiviert)");
     }
-    
-    // Step 5: GA-FL Extraction
-    log("GA-FL Extraktion...");
-    combinedScr += "; === GA-FL Phase 1: Extraktion ===\n";
-    combinedScr += generateExtractionScr(dwgFiles);
-    
-    // Add marker file write at end of Phase 1 SCR
-    m_phase1MarkerPath = m_extractTempDir + "/phase1_complete.marker";
-    QString markerPath = m_phase1MarkerPath;
-    markerPath.replace("\\", "/");
-    combinedScr += "; --- Phase 1 completion marker ---\n";
-    combinedScr += QString("(progn (setq f (open \"%1\" \"w\"))(write-line \"PHASE1_COMPLETE\" f)(close f)(princ))\n")
-                  .arg(markerPath);
-    
-    // Execute Phase 1
-    m_fullProjectMode = true;
-    if (!combinedScr.trimmed().isEmpty()) {
-        if (executeScrFile(combinedScr, "Projekt erstellen - Phase 1")) {
-            m_gaFlPhase = GaFlPhase::Phase1Done;
-            m_btnFullProject->setEnabled(false);
-            m_btnFullProject->setText("Projekt wird erstellt...");
-            m_phase1Timer->start();
-            logSuccess("Phase 1 gestartet. Phase 2 startet automatisch nach Abschluss.");
-        }
-    } else {
-        logError("Keine Operationen zum Ausfuehren");
-        m_fullProjectMode = false;
+
+    log(QString("Quellzeichnungen: Plankopf%1%2, Extraktion...")
+        .arg(doBmk ? ", BMK" : "", doBas ? ", BAS" : ""));
+
+    // Zaehler eines frueheren Laufs duerfen nicht weiterzaehlen
+    if (doBmk) removeBmkCounters();
+
+    OcLogFile extractLog;
+    extractLog.open(m_extractTempDir + "/extractdp_log.txt", true);
+    QMap<QString, QStringList> extracted;   // Zeichnung -> Zeilen ihrer CSV
+    int hierarchieCount = 0;
+
+    beginPhase("Quellzeichnungen", dwgFiles.size());
+    for (const QString& path : dwgFiles) {
+        const QString folder = QFileInfo(path).absolutePath();
+        QString asp, gewerk, anlage;
+        deriveHierarchieFromFolder(folder, asp, gewerk, anlage);
+
+        // Der Tempordner spiegelt den Zeichnungsordner, damit gleichnamige
+        // Zeichnungen verschiedener Anlagen einander nicht ueberschreiben
+        const QString subDir = m_extractTempDir + "/" + drawingsRoot.relativeFilePath(folder);
+        QDir().mkpath(subDir);
+
+        processDrawing(path, counts, [&](OcDrawing& dwg) {
+            if (!plankopfPairs.isEmpty()) {
+                dwg.setAttributes(plankopfPairs);
+            }
+            if (!asp.isEmpty()) {
+                dwg.setAttributes(hierarchiePairs(asp, gewerk, anlage),
+                                  QStringLiteral("OC_RSH_Plankopf_quer*"));
+                ++hierarchieCount;
+            }
+            if (doBmk) {
+                counts.bmk += dwg.bmkNummerierung().numbered;
+            }
+            if (doBas) {
+                counts.bas += dwg.genBas(basSegments);
+            }
+            const OcExtractResult ex = dwg.extractDp(subDir, &extractLog);
+            if (ex.ok) {
+                extracted.insert(path, ex.lines);
+                counts.datenpunkte += ex.dpCount;
+            } else {
+                logError(QString("%1: %2").arg(QFileInfo(path).fileName(), ex.error));
+                ++counts.errors;
+            }
+        });
+        stepDone(QFileInfo(path).fileName());
     }
+    extractLog.close();
+
+    // Die Zaehler reichen die BMK-Nummern von Zeichnung zu Zeichnung weiter.
+    // Nach der letzten Zeichnung haben sie ihren Zweck erfuellt.
+    if (doBmk) {
+        const int removed = removeBmkCounters();
+        if (removed > 0) {
+            log(QString("BMK-Zaehlerdateien entfernt: %1").arg(removed));
+        }
+    }
+
+    if (!plankopfPairs.isEmpty()) {
+        log(QString("Plankopf-Stammdaten: %1 Attribute in %2 Dateien")
+            .arg(m_plankopfCsvData.size()).arg(dwgFiles.size() + projektblaetter.size()));
+    }
+    log(QString("Plankopf-Attribute: %1 von %2 Dateien erhalten ASP/GEWERK/ANLAGE aus Ordnerhierarchie")
+        .arg(hierarchieCount).arg(dwgFiles.size()));
+    if (doBmk) {
+        log(QString("BMK-Nummerierung: %1 Kennzeichen vergeben").arg(counts.bmk));
+    }
+    if (doBas) {
+        log(QString("BAS-Generierung: %1 BAS-Strings geschrieben").arg(counts.bas));
+    }
+    logSuccess(QString("Phase 1 abgeschlossen: %1 Datenpunkte extrahiert")
+               .arg(counts.datenpunkte));
+
+    // Phase 2: GA-FL-Blaetter
+    QVector<SourceDrawingInfo> drawings = readExtractedData(dwgFiles);
+    if (drawings.isEmpty()) {
+        logError("Keine extrahierten Datenpunkte gefunden.");
+        return false;
+    }
+    if (!confirmMissingReferences(drawings)) {
+        return false;
+    }
+
+    log("GA-FL Erzeugung und Befuellung...");
+    createGaFlSheets(drawings, extracted, refCsvPath, counts);
+
+    // Phase 3: Summen aus den fertigen GA-FL-Blaettern, danach Textbreiten
+    createSummen(counts);
+    return true;
 }
 
 // ============================================================================
@@ -1295,22 +1584,41 @@ void OpenCirtTab::onSensorListeGenerate() {
     }
     log(QString("%1 Sensor-Keywords geladen").arg(keywords.keywordCount()));
 
-    // --- 2. Extrahierte Daten lesen ---
-    // Voraussetzung: Phase 1 (Extraktion) muss vorher gelaufen sein
+    // --- 2. Datenpunkte aus den Zeichnungen lesen ---
+    // Die Liste liest die Zeichnungen des geladenen Projekts selbst. Frueher
+    // griff sie auf die Extraktion des letzten Gesamtlaufs im Tempordner
+    // zurueck - die konnte zu einem anderen Projekt oder zu einem aelteren
+    // Stand der Zeichnungen gehoeren.
     QStringList dwgFiles = findProjectDwgs();
     if (dwgFiles.isEmpty()) {
         logError("Keine DWG-Dateien im Projekt gefunden!");
         return;
     }
 
-    QVector<SourceDrawingInfo> drawings = readExtractedData(dwgFiles);
+    QStringList unreadable;
+    QVector<SourceDrawingInfo> drawings;
+    beginRun(m_btnSensorliste, "Sensorliste wird erstellt...");
+    const bool extracted = extractDrawings(dwgFiles, QStringLiteral("Sensorliste"), unreadable);
+    if (extracted && unreadable.isEmpty()) {
+        drawings = readExtractedData(dwgFiles);
+    }
+    endRun();
+
+    if (!extracted) return;
+    if (!unreadable.isEmpty()) {
+        logError(QString("Sensorliste nicht erstellt: %1 Zeichnung(en) nicht lesbar")
+                 .arg(unreadable.size()));
+        showListWarning(this, "Sensorliste",
+            "Diese Zeichnungen liessen sich nicht lesen:",
+            unreadable,
+            "Die Sensorliste waere unvollstaendig und wurde nicht erstellt.");
+        return;
+    }
     if (drawings.isEmpty()) {
-        logError("Keine extrahierten Daten gefunden!\n"
-                 "Bitte zuerst GA-FL Phase 1 (Extraktion) ausfuehren.");
+        logError("Keine aktiven Datenpunkte in den Zeichnungen gefunden");
         QMessageBox::warning(this, "Sensorliste",
-            "Keine extrahierten Daten gefunden.\n\n"
-            "Bitte zuerst GA-FL erstellen (mindestens Phase 1),\n"
-            "damit die Datenpunkte extrahiert werden.");
+            QString("In den %1 Zeichnungen des Projekts wurden keine aktiven "
+                    "Datenpunkte gefunden.").arg(dwgFiles.size()));
         return;
     }
 
@@ -1375,26 +1683,26 @@ void OpenCirtTab::onSensorListeGenerate() {
         return;
     }
 
-    // --- 4. ODS-Vorlage befuellen ---
-    QString templatePath = projectPath(OpenCirtConfig::VORLAGEN_DIR)
-                           + "/OC_VORLAGE_SENSORLISTE_V_1.ods";
-    if (!QFileInfo::exists(templatePath)) {
-        logError("ODS-Vorlage nicht gefunden: " + templatePath);
-        return;
-    }
-
+    // --- 4. CSV schreiben ---
     // Ausgabe in Plot-Ordner (zentraler Ausgabeort)
     QString plotDir = m_projectRoot + "/06- Plot";
     QDir().mkpath(plotDir);
-    QString outputPath = plotDir + "/Sensorliste.ods";
+    QString outputPath = plotDir + "/Sensorliste.csv";
 
-    OdsTemplateWriter writer;
-    if (!writer.openTemplate(templatePath, outputPath)) {
-        logError("ODS-Template-Fehler: " + writer.lastError());
+    CsvListWriter writer;
+    if (!writer.open(outputPath, {
+            QStringLiteral("Pos.:"),
+            QStringLiteral("ASP"),
+            QStringLiteral("Anlage:"),
+            QStringLiteral("Klartextbezeichnung:"),
+            QStringLiteral("BMK:"),
+            QStringLiteral("BAS:"),
+            QString::fromUtf8("F\xC3\xBC" "hlertyp:")})) {
+        logError("CSV-Fehler: " + writer.lastError());
         return;
     }
 
-    // Datenzeilen einfuegen (8 Spalten: Pos, ASP, Anlage, Bezeichnung, BMK, BAS, Typ, Bemerkung)
+    // Datenzeilen (7 Spalten: Pos, ASP, Anlage, Bezeichnung, BMK, BAS, Typ)
     int pos = 1;
     for (const SensorEntry& s : sensors) {
         writer.addRow({
@@ -1404,14 +1712,13 @@ void OpenCirtTab::onSensorListeGenerate() {
             s.bezeichnung,
             s.bmk,
             s.bas,
-            s.fuehlertyp,
-            QString()  // Bemerkung leer
+            s.fuehlertyp
         });
         pos++;
     }
 
     if (!writer.save()) {
-        logError("ODS-Speichern fehlgeschlagen: " + writer.lastError());
+        logError("CSV-Speichern fehlgeschlagen: " + writer.lastError());
         return;
     }
 
@@ -1547,7 +1854,7 @@ static SheetAttributes readSheetAttributes(const QString& dwgPath, const QString
 //
 // Die Spalte "Modul-Typ" wird ausschliesslich fuer HW-Zeilen befuellt; alle
 // anderen Integrationsarten belegen keinen Klemmenkanal. Wer die Spalte nicht
-// braucht, loescht sie in der erzeugten ODS-Datei.
+// braucht, loescht sie in der erzeugten CSV-Datei.
 
 void OpenCirtTab::onDatenpunktExport() {
     QStringList errors;
@@ -1896,38 +2203,34 @@ void OpenCirtTab::onDatenpunktExport() {
         return;
     }
 
-    // --- 4. Module zuweisen und ODS schreiben ---
-    QString templatePath = projectPath(OpenCirtConfig::VORLAGEN_DIR)
-                           + "/OC_VORLAGE_IO_BELEGUNG_V_1.ods";
-    if (!QFileInfo::exists(templatePath)) {
-        logError("ODS-Vorlage nicht gefunden: " + templatePath);
-        return;
-    }
-
+    // --- 4. Module zuweisen und CSV schreiben ---
     QString plotDir = m_projectRoot + "/06- Plot";
     QDir().mkpath(plotDir);
 
     // Ausgabename richtet sich nach dem Filter
     QString outputName;
     if (filterAll) {
-        outputName = "Datenpunktliste.ods";
+        outputName = "Datenpunktliste.csv";
     } else if (filterList.size() == 1 && wantsHw) {
-        outputName = "IO-Belegungsliste.ods";
+        outputName = "IO-Belegungsliste.csv";
     } else {
-        outputName = "Datenpunktliste_" + filterList.join("-") + ".ods";
+        outputName = "Datenpunktliste_" + filterList.join("-") + ".csv";
     }
     QString outputPath = plotDir + "/" + outputName;
 
-    OdsTemplateWriter writer;
-    if (!writer.openTemplate(templatePath, outputPath)) {
-        logError("ODS-Template-Fehler: " + writer.lastError());
+    CsvListWriter writer;
+    if (!writer.open(outputPath, {
+            QStringLiteral("Pos.:"),
+            QStringLiteral("ASP"),
+            QStringLiteral("Anlage:"),
+            QStringLiteral("Klartextbezeichnung:"),
+            QStringLiteral("BMK:"),
+            QStringLiteral("BAS:"),
+            QStringLiteral("Integrationsart:"),
+            QStringLiteral("Modul-Typ:")})) {
+        logError("CSV-Fehler: " + writer.lastError());
         return;
     }
-
-    // Hinweiszeilen entfernen (Zeile 2 = Modultypen-Info, Zeile 3 = Hinweis)
-    // Zeile 3 zuerst entfernen (hoeherer Index), dann Zeile 2
-    writer.removeRow(3);
-    writer.removeRow(2);
 
     int pos = 1;
 
@@ -2065,7 +2368,7 @@ void OpenCirtTab::onDatenpunktExport() {
     }
 
     if (!writer.save()) {
-        logError("ODS-Speichern fehlgeschlagen: " + writer.lastError());
+        logError("CSV-Speichern fehlgeschlagen: " + writer.lastError());
         return;
     }
 
@@ -2234,6 +2537,197 @@ void OpenCirtTab::onProjektBereinigen() {
 }
 
 // ============================================================================
+// Projekt aufbauen (Erstellliste)
+// ============================================================================
+
+void OpenCirtTab::onProjektAufbauen() {
+    const QString title = "Projekt aufbauen";
+
+    if (m_projectRoot.isEmpty()) {
+        QMessageBox::warning(this, title,
+            "Kein Projektverzeichnis angegeben.\n\n"
+            "Bitte den Projektordner im General-Tab waehlen.");
+        return;
+    }
+    // Nur der Vorlagen-Ordner ist Pflicht: '05- Projekt Zeichnungen' legt der
+    // Aufbau selbst an, wenn der Ordner noch fehlt.
+    if (!QDir(projectPath(OpenCirtConfig::VORLAGEN_DIR)).exists()) {
+        QMessageBox::warning(this, title,
+            QString("Vorlagen-Ordner nicht gefunden:\n\n%1")
+            .arg(QDir::toNativeSeparators(projectPath(OpenCirtConfig::VORLAGEN_DIR))));
+        return;
+    }
+
+    // -------- Erstellliste waehlen --------
+    QSettings settings("BatchProcessing", "BricsCAD_Plugin");
+    QString startDir = settings.value("openCirt/erstelllisteDir").toString();
+    if (startDir.isEmpty() || !QDir(startDir).exists()) {
+        startDir = m_projectRoot;
+    }
+    const QString csvPath = QFileDialog::getOpenFileName(this,
+        "CSV-Erstellliste waehlen", startDir,
+        "Erstellliste (*.csv);;Alle Dateien (*)");
+    if (csvPath.isEmpty()) return;
+    settings.setValue("openCirt/erstelllisteDir", QFileInfo(csvPath).absolutePath());
+
+    // -------- Vorschau oder echter Lauf --------
+    QMessageBox modeBox(this);
+    modeBox.setWindowTitle(title);
+    modeBox.setIcon(QMessageBox::Question);
+    modeBox.setText(QString("Erstellliste:\n  %1\n\nProjekt:\n  %2")
+        .arg(QDir::toNativeSeparators(csvPath),
+             QDir::toNativeSeparators(m_projectRoot)));
+    modeBox.setInformativeText(
+        "Vorschau: schreibt nur das Log, aendert nichts am Projekt.\n\n"
+        "Aufbauen: loescht den Inhalt von '05- Projekt Zeichnungen' und erzeugt "
+        "die Zeichnungen neu. Vorher folgt eine Sicherheitsabfrage.");
+    QPushButton* btnDry = modeBox.addButton("Vorschau", QMessageBox::AcceptRole);
+    QPushButton* btnReal = modeBox.addButton("Aufbauen", QMessageBox::DestructiveRole);
+    modeBox.addButton("Abbrechen", QMessageBox::RejectRole);
+    modeBox.setDefaultButton(btnDry);
+    modeBox.exec();
+
+    const bool dryRun = (modeBox.clickedButton() == btnDry);
+    if (!dryRun && modeBox.clickedButton() != btnReal) return;
+
+    log(dryRun ? "=== PROJEKT AUFBAUEN (Vorschau) ===" : "=== PROJEKT AUFBAUEN ===");
+    log(QString("Erstellliste: %1").arg(QDir::toNativeSeparators(csvPath)));
+
+    ProjectBuilder builder;
+    const bool prepared = builder.prepare(csvPath, m_projectRoot, dryRun);
+    const QString logPath = QDir::toNativeSeparators(builder.logPath());
+
+    if (!prepared) {
+        if (builder.blockedByOpenDrawings()) {
+            QStringList entries;
+            for (const QString& f : builder.preview().openDocs) {
+                entries << "In dieser BricsCAD-Sitzung geoeffnet:  " + QDir::toNativeSeparators(f);
+            }
+            for (const QString& f : builder.preview().lockFiles) {
+                entries << "Sperrdatei (andere Sitzung oder Absturz-Rest):  "
+                           + QDir::toNativeSeparators(f);
+            }
+            logError(QString("Aufbau abgebrochen: %1 offene Zeichnung(en)/Sperrdatei(en)")
+                     .arg(entries.size()));
+            showListWarning(this, title,
+                "Aufbau abgebrochen - Zeichnungen sind offen!\n\n"
+                "Es wurde NICHTS geloescht und NICHTS erzeugt.",
+                entries,
+                "Bitte Zeichnungen schliessen (bzw. verwaiste Sperrdateien loeschen) "
+                "und den Aufbau erneut starten.\n\nLog: " + logPath);
+        } else {
+            logError("Aufbau abgebrochen: " + builder.lastError());
+            QMessageBox::critical(this, title,
+                builder.lastError()
+                + (logPath.isEmpty() ? QString() : "\n\nLog: " + logPath));
+        }
+        return;
+    }
+
+    const ProjectBuilder::Preview& pv = builder.preview();
+
+    // -------- Vorschau: Plan ins Log, fertig --------
+    if (dryRun) {
+        builder.runDry();
+        logSuccess(QString("Vorschau: %1 Zeichnung(en) geplant, %2 Datei(en) wuerden "
+                           "geloescht, %3 Warnung(en)")
+                   .arg(pv.planCount).arg(pv.deleteCount).arg(pv.warnings));
+        log(QString("Log: %1").arg(logPath));
+        QMessageBox::information(this, title,
+            QString("Vorschau abgeschlossen - es wurde nichts geaendert.\n\n"
+                    "Zu erzeugende Zeichnungen:  %1\n"
+                    "Zu loeschende Dateien:  %2\n"
+                    "Geschuetzt (*Deckblatt_A.dwg):  %3\n"
+                    "Warnungen:  %4\n\n"
+                    "Log: %5")
+            .arg(pv.planCount).arg(pv.deleteCount).arg(pv.protectedCount)
+            .arg(pv.warnings).arg(logPath));
+        return;
+    }
+
+    // -------- Sicherheitsabfrage --------
+    QString question = QString(
+        "WICHTIG: Vor dem Lauf den Projektordner sichern!\n\n"
+        "Es werden %1 Datei(en) unter '05- Projekt Zeichnungen' geloescht\n%2\n\n"
+        "Anschliessend werden %3 Zeichnung(en) neu erzeugt.")
+        .arg(pv.deleteCount)
+        .arg(pv.protectDeckblatt
+             ? "(ausser *Deckblatt_A.dwg auf oberster Ebene)."
+             : "(INKLUSIVE *Deckblatt_A.dwg - die Liste erzeugt die Projektblaetter selbst).")
+        .arg(pv.planCount);
+    if (pv.warnings > 0) {
+        question += QString("\n\nBeim Lesen der Liste gab es %1 Warnung(en), "
+                            "Einzelheiten im Log:\n%2").arg(pv.warnings).arg(logPath);
+    }
+    question += "\n\nFortfahren?";
+
+    if (QMessageBox::warning(this, title, question,
+                             QMessageBox::Yes | QMessageBox::No,
+                             QMessageBox::No) != QMessageBox::Yes) {
+        builder.cancelByUser();
+        log("Aufbau abgebrochen durch Benutzer (Sicherheitsabfrage)");
+        return;
+    }
+
+    // -------- Aufbau --------
+    // Waehrend des Laufs keine Eingaben annehmen: die Anzeige wird weiter
+    // gezeichnet, Klicks und Tasten bleiben liegen.
+    m_btnProjektAufbau->setEnabled(false);
+    m_btnProjektAufbau->setText("Projekt wird aufgebaut...");
+    m_progressBar->setRange(0, pv.planCount);
+    m_progressBar->setValue(0);
+    m_progressBar->setVisible(true);
+
+    connect(&builder, &ProjectBuilder::progress, this,
+        [this](int current, int total, const QString& fileName) {
+            m_progressBar->setValue(current);
+            emit statusMessage(QString("Projekt aufbauen: %1 von %2 - %3")
+                               .arg(current).arg(total).arg(fileName));
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        });
+
+    const ProjectBuilder::Result result = builder.runReal();
+
+    emit statusMessage(QString());
+    m_progressBar->setVisible(false);
+    m_btnProjektAufbau->setText("Projekt aufbauen");
+    m_btnProjektAufbau->setEnabled(true);
+
+    if (result.aborted) {
+        logError("Aufbau abgebrochen: Stempel nicht gefunden. Siehe Log: " + logPath);
+        QMessageBox::critical(this, title, result.abortMessage);
+        return;
+    }
+
+    const QString summary = QString(
+        "Erstellt mit Attributen:  %1\n"
+        "Nur kopiert (ohne Attribute):  %2\n"
+        "Fehler beim Aufbau:  %3\n"
+        "Fehler/Warnungen insgesamt:  %4")
+        .arg(result.created).arg(result.copiedOnly)
+        .arg(result.errors).arg(result.warnings);
+
+    if (result.errors == 0) {
+        logSuccess(QString("Projekt aufgebaut: %1 Zeichnung(en) erstellt, %2 nur kopiert, "
+                           "%3 Warnung(en)")
+                   .arg(result.created).arg(result.copiedOnly).arg(result.warnings));
+    } else {
+        logError(QString("Projekt aufgebaut mit %1 Fehler(n): %2 erstellt, %3 nur kopiert")
+                 .arg(result.errors).arg(result.created).arg(result.copiedOnly));
+    }
+    log(QString("Log: %1").arg(logPath));
+
+    if (result.errors == 0 && result.warnings == 0) {
+        QMessageBox::information(this, title,
+            "Projekt aufgebaut.\n\n" + summary + "\n\nLog: " + logPath);
+    } else {
+        QMessageBox::warning(this, title,
+            "Projekt aufgebaut - bitte das Log pruefen.\n\n" + summary
+            + "\n\nLog: " + logPath);
+    }
+}
+
+// ============================================================================
 // Deckblatt Generation
 // ============================================================================
 
@@ -2322,13 +2816,11 @@ int OpenCirtTab::cleanupDeckblaetter() {
     return deletedCount;
 }
 
-QString OpenCirtTab::generateDeckblattScr() {
-    QString scr;
-    
+void OpenCirtTab::createDeckblaetter(RunCounts& counts) {
     QString vorlage = findDeckblattVorlage();
     if (vorlage.isEmpty()) {
         logError("Deckblatt-Vorlage OC_VORLAGE_DIN_A2_*.dwg nicht gefunden");
-        return scr;
+        return;
     }
     
     QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
@@ -2338,6 +2830,7 @@ QString OpenCirtTab::generateDeckblattScr() {
     // Vorlage und blieben sonst ohne AG/AN/PR, wenn die Generierung nicht aus
     // dem Gesamtlauf heraus angestossen wurde.
     ensurePlankopfCsvLoaded();
+    const OcPairs plankopfPairs = pairsFromMap(m_plankopfCsvData);
 
     // Recursively find all subdirectories under Zeichnungen
     QDirIterator dirIt(drawingsDir, QDir::Dirs | QDir::NoDotAndDotDot,
@@ -2349,7 +2842,14 @@ QString OpenCirtTab::generateDeckblattScr() {
     }
     folders.sort();  // Ensure alphabetical order
 
-    int deckblattCount = 0;
+    // Layer, die auf einem Deckblatt nichts zu suchen haben
+    const QStringList frozenLayers = {
+        "GA-Trennlinie-BAS", "GA-Trennlinie-LVB",
+        "GA-Trennlinie-Regeldiagramme", "GA-Trennlinie-Regelstruktur",
+        "GA-Konstruktionslinie", "GA-MBE-Grafik"
+    };
+
+    beginPhase("Deckblaetter", folders.size());
 
     // === Folder-level Deckblaetter ===
     for (const QString& folderPath : folders) {
@@ -2362,130 +2862,35 @@ QString OpenCirtTab::generateDeckblattScr() {
         QString targetName = QString("0000 %1_Deckblatt.dwg").arg(displayName);
         QString targetPath = folderPath + "/" + targetName;
         targetPath.replace("\\", "/");
-        
-        scr += QString("; --- Deckblatt: %1 ---\n").arg(displayName);
-        
-        // 1. Copy template
-        scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-               .arg(vorlage, targetPath);
-        
-        // 2. Open
-        scr += QString("_.OPEN \"%1\"\n").arg(targetPath);
-        
-        // 3. Thaw layer GA-Deckblatt, freeze Trennlinien layers
-        // Direct VLA property manipulation - more reliable than command in SCR context
-        scr += "(progn\n"
-               "  (setq layers (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))))\n"
-               "  (if (tblsearch \"LAYER\" \"GA-Deckblatt\")\n"
-               "    (progn\n"
-               "      (setq lo (vla-item layers \"GA-Deckblatt\"))\n"
-               "      (vla-put-Freeze lo :vlax-false)\n"
-               "      (vla-put-LayerOn lo :vlax-true)\n"
-               "    )\n"
-               "  )\n"
-               "  (foreach ln '(\"GA-Trennlinie-BAS\" \"GA-Trennlinie-LVB\"\n"
-               "                \"GA-Trennlinie-Regeldiagramme\" \"GA-Trennlinie-Regelstruktur\"\n"
-               "                \"GA-Konstruktionslinie\" \"GA-MBE-Grafik\")\n"
-               "    (if (tblsearch \"LAYER\" ln)\n"
-               "      (progn\n"
-               "        (setq lo (vla-item layers ln))\n"
-               "        (vla-put-Freeze lo :vlax-true)\n"
-               "      )\n"
-               "    )\n"
-               "  )\n"
-               "  (princ)\n"
-               ")\n";
-        
-        // 4. Replace text "DECKBLATT" with display name (TEXT + MTEXT entities)
-        scr += QString(
-            "(progn\n"
-            "  (setq ss (ssget \"X\" '((0 . \"TEXT,MTEXT\"))))\n"
-            "  (if ss\n"
-            "    (progn\n"
-            "      (setq i 0)\n"
-            "      (while (< i (sslength ss))\n"
-            "        (setq ent (ssname ss i))\n"
-            "        (setq ed (entget ent))\n"
-            "        (setq txt (cdr (assoc 1 ed)))\n"
-            "        (if (= (strcase txt) \"DECKBLATT\")\n"
-            "          (progn\n"
-            "            (setq ed (subst (cons 1 \"%1\") (assoc 1 ed) ed))\n"
-            "            (entmod ed)\n"
-            "            (entupd ent)\n"
-            "          )\n"
-            "        )\n"
-            "        (setq i (1+ i))\n"
-            "      )\n"
-            "    )\n"
-            "  )\n"
-            "  (princ)\n"
-            ")\n"
-        ).arg(displayName);
-        
-        // 4b. ASP/GEWERK/ANLAGE aus der Ordnerhierarchie setzen.
+
+        // ASP/GEWERK/ANLAGE aus der Ordnerhierarchie.
         // Los-Deckblatt   -> alle drei leer
         // ASP-Deckblatt   -> ASP
         // Gewerk-Deckblatt-> ASP + GEWERK
         // Anlagen-Deckblatt-> ASP + GEWERK + ANLAGE
-        {
-            QString aspValue, gewerkValue, anlageValue;
-            deriveHierarchieFromFolder(folderPath, aspValue, gewerkValue, anlageValue);
-            scr += generateSetHierarchieSnippet(aspValue, gewerkValue, anlageValue);
+        QString aspValue, gewerkValue, anlageValue;
+        deriveHierarchieFromFolder(folderPath, aspValue, gewerkValue, anlageValue);
+
+        if (!copyTemplate(vorlage, targetPath)) {
+            logError(QString("Deckblatt nicht kopierbar: %1").arg(targetName));
+            ++counts.errors;
+        } else if (processNewDrawing(targetPath, counts, [&](OcDrawing& dwg) {
+                       // Layer GA-Deckblatt zeigen, Trennlinien ausblenden
+                       dwg.thawLayer("GA-Deckblatt");
+                       dwg.freezeLayers(frozenLayers);
+                       // Text "DECKBLATT" durch den Namen der Ebene ersetzen
+                       dwg.replaceText("DECKBLATT", displayName);
+                       dwg.setAttributes(hierarchiePairs(aspValue, gewerkValue, anlageValue));
+                       if (!plankopfPairs.isEmpty()) {
+                           dwg.setAttributes(plankopfPairs);
+                       }
+                   })) {
+            ++counts.deckblaetter;
         }
-        
-        // 4c. Plankopf-Stammdaten aus CSV (falls vorhanden)
-        if (!m_plankopfCsvData.isEmpty()) {
-            scr += generateSetPlankopfSnippet(m_plankopfCsvData);
-        }
-        
-        // 5. Save and close
-        scr += lispSave();
-        scr += lispClose();
-        
-        deckblattCount++;
+        stepDone(targetName);
     }
     
-    log(QString("Deckblatt-SCR: %1 Deckblaetter geplant").arg(deckblattCount));
-    return scr;
-}
-
-QString OpenCirtTab::generateSetHierarchieSnippet(const QString& aspValue,
-                                                 const QString& gewerkValue,
-                                                 const QString& anlageValue) {
-    // Setzt ASP, GEWERK und ANLAGE in allen Bloecken, die diese Tags fuehren.
-    // Leere Werte loeschen das jeweilige Attribut - so bleibt z.B. auf einem
-    // Los-Deckblatt nichts von einem frueheren Lauf stehen.
-    // Tag-Varianten GEWERK/OC_GEWERK bzw. ANLAGE/OC_ANLAGE werden beide bedient
-    // (identisch zu generatePlankopfAspScr).
-    return QString(
-        "(progn\n"
-        "  (setq ss-ins (ssget \"X\" '((0 . \"INSERT\"))))\n"
-        "  (if ss-ins\n"
-        "    (progn\n"
-        "      (setq i 0)\n"
-        "      (while (< i (sslength ss-ins))\n"
-        "        (setq ent (ssname ss-ins i))\n"
-        "        (setq obj (vlax-ename->vla-object ent))\n"
-        "        (if (and (vlax-property-available-p obj 'HasAttributes)\n"
-        "                 (= (vla-get-HasAttributes obj) :vlax-true))\n"
-        "          (foreach att (vlax-invoke obj 'GetAttributes)\n"
-        "            (cond\n"
-        "              ((= (strcase (vla-get-TagString att)) \"ASP\")\n"
-        "               (vla-put-TextString att \"%1\"))\n"
-        "              ((member (strcase (vla-get-TagString att)) '(\"GEWERK\" \"OC_GEWERK\"))\n"
-        "               (vla-put-TextString att \"%2\"))\n"
-        "              ((member (strcase (vla-get-TagString att)) '(\"ANLAGE\" \"OC_ANLAGE\"))\n"
-        "               (vla-put-TextString att \"%3\"))\n"
-        "            )\n"
-        "          )\n"
-        "        )\n"
-        "        (setq i (1+ i))\n"
-        "      )\n"
-        "    )\n"
-        "  )\n"
-        "  (princ)\n"
-        ")\n"
-    ).arg(aspValue, gewerkValue, anlageValue);
+    log(QString("Deckblaetter: %1 erzeugt").arg(counts.deckblaetter));
 }
 
 void OpenCirtTab::deriveHierarchieFromFolder(const QString& folderPath,
@@ -2522,9 +2927,23 @@ void OpenCirtTab::deriveHierarchieFromFolder(const QString& folderPath,
     if (parts.size() >= 2) anlage = folderDisplayName(parts[1]);
 }
 
-void OpenCirtTab::ensurePlankopfCsvLoaded() {
-    if (!m_plankopfCsvData.isEmpty()) return;
+void OpenCirtTab::loadPlankopfCsv() {
+    const QFileInfo info(referencePath(OpenCirtConfig::PLANKOPF_CSV));
     m_plankopfCsvData = readPlankopfCsv();
+    m_plankopfCsvPath = info.absoluteFilePath();
+    m_plankopfCsvStamp = info.exists() ? info.lastModified() : QDateTime();
+    m_plankopfCsvSize = info.exists() ? info.size() : -1;
+}
+
+void OpenCirtTab::ensurePlankopfCsvLoaded() {
+    // Die Daten gehoeren zum Projekt und koennen sich zwischen zwei Laeufen
+    // aendern. Geladenes gilt nur, solange es dieselbe Datei im selben Stand ist.
+    const QFileInfo info(referencePath(OpenCirtConfig::PLANKOPF_CSV));
+    const bool current =
+        info.absoluteFilePath() == m_plankopfCsvPath
+        && (info.exists() ? info.lastModified() : QDateTime()) == m_plankopfCsvStamp
+        && (info.exists() ? info.size() : -1) == m_plankopfCsvSize;
+    if (!current) loadPlankopfCsv();
 }
 
 // ============================================================================
@@ -2575,268 +2994,6 @@ QMap<QString, QString> OpenCirtTab::readPlankopfCsv() {
     return data;
 }
 
-QString OpenCirtTab::generateSetPlankopfSnippet(const QMap<QString, QString>& attrs) {
-    if (attrs.isEmpty()) return QString();
-    
-    // Generate LISP that sets all given attributes in all INSERT blocks
-    // (not just Plankopf blocks - catches all blocks that have matching attributes)
-    QString lisp;
-    lisp += "(progn\n";
-    lisp += "  (setq ss-all (ssget \"X\" '((0 . \"INSERT\"))))\n";
-    lisp += "  (if ss-all\n";
-    lisp += "    (progn\n";
-    lisp += "      (setq idx 0)\n";
-    lisp += "      (while (< idx (sslength ss-all))\n";
-    lisp += "        (setq ent (ssname ss-all idx))\n";
-    lisp += "        (setq obj (vlax-ename->vla-object ent))\n";
-    lisp += "        (if (and (vlax-property-available-p obj 'HasAttributes)\n";
-    lisp += "                 (= (vla-get-HasAttributes obj) :vlax-true))\n";
-    lisp += "          (foreach att (vlax-invoke obj 'GetAttributes)\n";
-    lisp += "            (cond\n";
-    
-    for (auto it = attrs.constBegin(); it != attrs.constEnd(); ++it) {
-        // Escape backslashes and quotes for LISP string embedding
-        QString escapedVal = it.value();
-        escapedVal.replace("\\", "\\\\");
-        escapedVal.replace("\"", "\\\"");
-        
-        lisp += QString(
-            "              ((= (strcase (vla-get-TagString att)) \"%1\")\n"
-            "               (vla-put-TextString att \"%2\"))\n"
-        ).arg(it.key().toUpper(), escapedVal);
-    }
-    
-    lisp += "            )\n";
-    lisp += "          )\n";
-    lisp += "        )\n";
-    lisp += "        (setq idx (1+ idx))\n";
-    lisp += "      )\n";
-    lisp += "    )\n";
-    lisp += "  )\n";
-    lisp += "  (princ)\n";
-    lisp += ")\n";
-    
-    return lisp;
-}
-
-QString OpenCirtTab::generatePlankopfCsvScr(const QStringList& dwgFiles) {
-    QMap<QString, QString> csvData = readPlankopfCsv();
-    if (csvData.isEmpty()) return QString();
-    
-    // Cache for later use (Deckblatt, parseExtractedCsv)
-    m_plankopfCsvData = csvData;
-    
-    QString lispSnippet = generateSetPlankopfSnippet(csvData);
-    if (lispSnippet.isEmpty()) return QString();
-    
-    QString scr;
-    int count = 0;
-    
-    for (const QString& dwg : dwgFiles) {
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-        
-        scr += QString("; --- Plankopf-CSV: %1 ---\n").arg(QFileInfo(dwg).fileName());
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        scr += lispSnippet;
-        scr += lispSave();
-        scr += lispClose();
-        count++;
-    }
-    
-    log(QString("Plankopf-CSV-SCR: %1 Attribute in %2 Dateien").arg(csvData.size()).arg(count));
-    return scr;
-}
-
-QString OpenCirtTab::generatePlankopfAspScr(const QStringList& dwgFiles) {
-    QString scr;
-    QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    int setCount = 0;
-    
-    for (const QString& dwg : dwgFiles) {
-        // Find ASP folder path by walking up
-        QDir searchDir(QFileInfo(dwg).absolutePath());
-        QString aspFolderPath;
-        QString aspRaw;
-        
-        while (searchDir.absolutePath().length() > drawingsDir.length()) {
-            QString dn = searchDir.dirName();
-            if (dn.contains("ASP", Qt::CaseInsensitive) ||
-                dn.contains("ISP", Qt::CaseInsensitive)) {
-                aspRaw = dn;
-                aspFolderPath = searchDir.absolutePath();
-                break;
-            }
-            searchDir.cdUp();
-        }
-        
-        if (aspRaw.isEmpty()) continue;
-        
-        QString aspDisplay = folderDisplayName(aspRaw);
-        
-        // Derive Gewerk and Anlage from path below ASP folder
-        // Structure: ASP / Gewerk / Anlage / *.dwg
-        QString dwgParent = QFileInfo(dwg).absolutePath();
-        QString relPath = QDir(aspFolderPath).relativeFilePath(dwgParent);
-        QStringList pathParts = relPath.split("/", Qt::SkipEmptyParts);
-        // Filter out "." (DWG directly in ASP folder)
-        pathParts.removeAll(".");
-        
-        QString gewerkDisplay;
-        QString anlageDisplay;
-        
-        if (pathParts.size() >= 1) {
-            gewerkDisplay = folderDisplayName(pathParts[0]);
-        }
-        if (pathParts.size() >= 2) {
-            anlageDisplay = folderDisplayName(pathParts[1]);
-        }
-        
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-        
-        scr += QString("; --- Plankopf: %1 -> ASP=%2 GEWERK=%3 ANLAGE=%4 ---\n")
-               .arg(QFileInfo(dwg).fileName(), aspDisplay, gewerkDisplay, anlageDisplay);
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        
-        // Targeted LISP: set ASP, GEWERK, ANLAGE in Plankopf block (OC_RSH_Plankopf_quer*)
-        // Checks both tag variants (GEWERK/OC_GEWERK, ANLAGE/OC_ANLAGE) for compatibility
-        scr += QString(
-            "(progn\n"
-            "  (setq ss-pk (ssget \"X\" '((0 . \"INSERT\")(2 . \"OC_RSH_Plankopf_quer*\"))))\n"
-            "  (if ss-pk\n"
-            "    (progn\n"
-            "      (setq i 0)\n"
-            "      (while (< i (sslength ss-pk))\n"
-            "        (setq ent (ssname ss-pk i))\n"
-            "        (setq obj (vlax-ename->vla-object ent))\n"
-            "        (if (and (vlax-property-available-p obj 'HasAttributes)\n"
-            "                 (= (vla-get-HasAttributes obj) :vlax-true))\n"
-            "          (foreach att (vlax-invoke obj 'GetAttributes)\n"
-            "            (cond\n"
-            "              ((= (strcase (vla-get-TagString att)) \"ASP\")\n"
-            "               (vla-put-TextString att \"%1\"))\n"
-            "              ((member (strcase (vla-get-TagString att)) '(\"GEWERK\" \"OC_GEWERK\"))\n"
-            "               (vla-put-TextString att \"%2\"))\n"
-            "              ((member (strcase (vla-get-TagString att)) '(\"ANLAGE\" \"OC_ANLAGE\"))\n"
-            "               (vla-put-TextString att \"%3\"))\n"
-            "            )\n"
-            "          )\n"
-            "        )\n"
-            "        (setq i (1+ i))\n"
-            "      )\n"
-            "    )\n"
-            "  )\n"
-            "  (princ)\n"
-            ")\n"
-        ).arg(aspDisplay, gewerkDisplay, anlageDisplay);
-        
-        scr += lispSave();
-        scr += lispClose();
-        setCount++;
-    }
-    
-    log(QString("Plankopf-Attribute-SCR: %1 von %2 Dateien erhalten ASP/GEWERK/ANLAGE aus Ordnerhierarchie")
-        .arg(setCount).arg(dwgFiles.size()));
-    return scr;
-}
-
-// ============================================================================
-// SCR Generation: BMK
-// ============================================================================
-
-QString OpenCirtTab::generateBmkScr(const QStringList& dwgFiles) {
-    QString scr;
-    QString lspPath = scriptsPath() + "/BmkNummerierung.lsp";
-    lspPath.replace("\\", "/");
-    
-    for (const QString& dwg : dwgFiles) {
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-        
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        scr += QString("(progn (load \"%1\")(princ))\n").arg(lspPath);
-        scr += "(progn (BmkNummerierung)(princ))\n";
-        scr += lispSave();
-        scr += lispClose();
-    }
-    
-    log(QString("BMK-SCR generiert: %1 Dateien").arg(dwgFiles.size()));
-    return scr;
-}
-
-// ============================================================================
-// SCR Generation: BAS
-// ============================================================================
-
-QString OpenCirtTab::generateBasScr(const QStringList& dwgFiles) {
-    QString scr;
-    QString lspPath = scriptsPath() + "/GenBas.lsp";
-    lspPath.replace("\\", "/");
-    
-    // The BAS.csv path is passed to the LISP as a parameter
-    QString basCsvPath = referencePath(OpenCirtConfig::BAS_CSV);
-    basCsvPath.replace("\\", "/");
-    
-    for (const QString& dwg : dwgFiles) {
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-        
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        scr += QString("(progn (load \"%1\")(princ))\n").arg(lspPath);
-        // Pass BAS.csv path as global variable before calling
-        scr += QString("(progn (setq *oc-bas-csv-path* \"%1\")(princ))\n").arg(basCsvPath);
-        scr += "(progn (GenBas)(princ))\n";
-        scr += lispSave();
-        scr += lispClose();
-    }
-    
-    log(QString("BAS-SCR generiert: %1 Dateien").arg(dwgFiles.size()));
-    return scr;
-}
-
-// ============================================================================
-// SCR Generation: GA-FL Phase 1 (Extraction)
-// ============================================================================
-
-QString OpenCirtTab::generateExtractionScr(const QStringList& dwgFiles) {
-    QString scr;
-    QString lspPath = scriptsPath() + "/ExtractDP.lsp";
-    lspPath.replace("\\", "/");
-    
-    // Temp directory for extracted CSVs
-    QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                      + "/OpenCirt_extract";
-    QDir().mkpath(tempDir);
-    tempDir.replace("\\", "/");
-    
-    // Mirror Zeichnungen folder structure in temp dir to avoid CSV name collisions
-    QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    QDir drawingsRoot(drawingsDir);
-    
-    for (const QString& dwg : dwgFiles) {
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-        
-        // Compute relative path from Zeichnungen root -> subdirectory in temp
-        QString relPath = drawingsRoot.relativeFilePath(QFileInfo(dwg).absolutePath());
-        QString subDir = tempDir + "/" + relPath;
-        subDir.replace("\\", "/");
-        QDir().mkpath(subDir);
-        
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        scr += QString("(progn (load \"%1\")(princ))\n").arg(lspPath);
-        // Pass mirrored subdirectory as output directory
-        scr += QString("(progn (setq *oc-extract-dir* \"%1\")(princ))\n").arg(subDir);
-        scr += "(progn (ExtractDP)(princ))\n";
-        scr += lispSave();
-        scr += lispClose();
-    }
-    
-    log(QString("Extraktions-SCR generiert: %1 Dateien, Temp: %2").arg(dwgFiles.size()).arg(tempDir));
-    return scr;
-}
-
 // ============================================================================
 // GA-FL Cleanup
 // ============================================================================
@@ -2864,45 +3021,11 @@ bool OpenCirtTab::cleanupGaFl() {
         }
     }
     
-    // Also delete CSV cache
-    QString csvCache = referencePath("GA_FL_VORLAGE.csv");
-    if (QFile::exists(csvCache)) {
-        QFile::remove(csvCache);
-        log("CSV-Cache geloescht");
-    }
-    
+    // GA_FL_VORLAGE.csv bleibt stehen: der Gesamtlauf hat sie unmittelbar
+    // vorher frisch aus der ODS erzeugt (convertOdsToCSV)
+
     log(QString("Cleanup: %1 Dateien geloescht").arg(deletedCount));
     return true;
-}
-
-// ============================================================================
-// SCR Generation: Text Width Adjustment
-// ============================================================================
-
-QString OpenCirtTab::generateTextwidthScrFor(const QStringList& dwgPaths) {
-    if (dwgPaths.isEmpty()) return QString();
-
-    QString lspPath = scriptsPath() + "/TextBreitenAnpassenBloecke.lsp";
-    if (!QFileInfo::exists(lspPath)) {
-        logError(QString("LISP-Skript nicht gefunden: %1").arg(lspPath));
-        return QString();
-    }
-    lspPath.replace("\\", "/");
-
-    QString scr;
-    for (const QString& dwg : dwgPaths) {
-        QString dwgPath = dwg;
-        dwgPath.replace("\\", "/");
-
-        scr += QString("_.OPEN \"%1\"\n").arg(dwgPath);
-        scr += QString("(progn (load \"%1\")(princ))\n").arg(lspPath);
-        scr += "(progn (TextBreitenAnpassenBloecke)(princ))\n";
-        scr += lispSave();
-        scr += lispClose();
-    }
-
-    log(QString("Textbreiten-SCR generiert: %1 Blaetter (GA-FL + Summen)").arg(dwgPaths.size()));
-    return scr;
 }
 
 // ============================================================================
@@ -3030,13 +3153,17 @@ SourceDrawingInfo OpenCirtTab::parseExtractedCsv(const QString& csvPath, const Q
 
 QVector<SourceDrawingInfo> OpenCirtTab::readExtractedData(const QStringList& dwgFiles) {
     QVector<SourceDrawingInfo> drawings;
-    
-    if (m_extractTempDir.isEmpty()) {
-        m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                           + "/OpenCirt_extract";
+
+    // Extraktionsdaten werden nur in dem Lauf gelesen, der sie geschrieben
+    // hat. Was von frueher im Tempordner liegt, kann zu einem anderen Projekt
+    // oder zu einem aelteren Stand der Zeichnungen gehoeren.
+    if (!extractDirUsable()) {
+        logError("Extraktionsdaten stammen nicht aus diesem Lauf - nichts gelesen");
+        return drawings;
     }
-    
+
     log(QString("Lese extrahierte Daten aus: %1").arg(m_extractTempDir));
+    ensurePlankopfCsvLoaded();
     
     int totalDp = 0;
     int totalSheets = 0;
@@ -3130,151 +3257,118 @@ QMap<QString, QVector<QString>> OpenCirtTab::readOdsReference() {
 }
 
 // ============================================================================
-// Phase 2: Generate GA-FL Creation/Fill SCR
+// Phase 2: GA-FL-Blaetter erzeugen und befuellen
 // ============================================================================
 
-QString OpenCirtTab::generateGaFlCreationScr(const QVector<SourceDrawingInfo>& drawings) {
-    QString scr;
-    
-    QString vorlage = templatePath(OpenCirtConfig::GA_FL_VORLAGE_DWG);
-    vorlage.replace("\\", "/");
-    
-    QString fillLspPath = scriptsPath() + "/FillGaFl.lsp";
-    fillLspPath.replace("\\", "/");
-    
-    QString refCsvPath = referencePath("GA_FL_VORLAGE.csv");
-    refCsvPath.replace("\\", "/");
-    
-    if (m_extractTempDir.isEmpty()) {
-        m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                           + "/OpenCirt_extract";
-    }
-    QString tempDir = m_extractTempDir;
-    tempDir.replace("\\", "/");
-    
+void OpenCirtTab::createGaFlSheets(const QVector<SourceDrawingInfo>& drawings,
+                                   const QMap<QString, QStringList>& extracted,
+                                   const QString& refCsvPath, RunCounts& counts) {
+    const QString vorlage = templatePath(OpenCirtConfig::GA_FL_VORLAGE_DWG);
+
+    bool referenceFound = false;
+    const QVector<QStringList> reference = OcEngine::readReferenceCsv(refCsvPath, &referenceFound);
+
+    OcLogFile fillLog;
+    fillLog.open(m_extractTempDir + "/fillgafl_log.txt", true);
+    OcFillState fillState;
+
     int totalSheets = 0;
-    
-    // Ensure batch mode system variables at SCR start
-    scr += "; --- Batch-Modus Systemvariablen ---\n";
-    scr += "(progn (setvar \"FILEDIA\" 0)(princ))\n";
-    scr += "(progn (setvar \"CMDECHO\" 0)(princ))\n";
-    scr += "(progn (setvar \"EXPERT\" 5)(princ))\n";
-    
-    // Mirror Zeichnungen folder structure to find CSVs (matches generateExtractionScr)
-    QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    QDir drawingsRoot(drawingsDir);
-    
+    for (const SourceDrawingInfo& drawing : drawings) {
+        totalSheets += drawing.gaFlSheetCount;
+    }
+    beginPhase("GA-FL", totalSheets);
+
+    const QStringList frozenLayers = { "GA-Konstruktionslinie", "GA-MBE-Grafik" };
+
     for (const SourceDrawingInfo& drawing : drawings) {
         if (drawing.dataPoints.isEmpty()) continue;
-        
+
+        const QStringList lines = extracted.value(drawing.filePath);
+        OcFillJob job;
+        job.rows = OcEngine::rowsFromLines(lines);
+        job.plankopf = OcEngine::plankopfFromLines(lines);
+        job.useReference = referenceFound;
+
         int dpCount = drawing.dataPoints.size();
         int sheetCount = drawing.gaFlSheetCount;
-        
-        // Source CSV path: mirrored subdirectory structure
-        QString relPath = drawingsRoot.relativeFilePath(QFileInfo(drawing.filePath).absolutePath());
-        QString srcCsvPath = tempDir + "/" + relPath + "/" + drawing.fileName + ".csv";
-        srcCsvPath.replace("\\", "/");
-        
+
         // Target folder for GA-FL sheets = same as source DWG folder
         QString targetFolder = QFileInfo(drawing.filePath).absolutePath();
         targetFolder.replace("\\", "/");
-        
+
         int dpOffset = 0;  // Running offset into the datapoint list
-        
+
         for (int sheet = 1; sheet <= sheetCount; ++sheet) {
             bool isFirstSheet = (sheet == 1);
-            int maxDpThisSheet = isFirstSheet 
-                ? OpenCirtConfig::MAX_DP_FIRST_SHEET 
+            int maxDpThisSheet = isFirstSheet
+                ? OpenCirtConfig::MAX_DP_FIRST_SHEET
                 : OpenCirtConfig::MAX_DP_FOLLOW_SHEET;
             int dpThisSheet = qMin(maxDpThisSheet, dpCount - dpOffset);
-            
+
             // GA-FL filename: <SourceName>_GA_FL_<SheetNum>.dwg
             QString gaFlName = QString("%1_GA_FL_%2.dwg")
                                .arg(drawing.fileName)
                                .arg(sheet, 2, 10, QChar('0'));
             QString gaFlPath = targetFolder + "/" + gaFlName;
-            
-            scr += QString("; --- %1 Blatt %2/%3 (%4 DPs) ---\n")
-                   .arg(drawing.fileName).arg(sheet).arg(sheetCount).arg(dpThisSheet);
-            
-            // Copy template to target, then open the copy
-            scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                   .arg(vorlage, gaFlPath);
-            scr += QString("_.OPEN \"%1\"\n").arg(gaFlPath);
-            
-            // Log-Pfad setzen (muss nach jedem _.OPEN neu, da LISP-Namespace pro Dokument)
-            {
-                QString logPath = tempDir + "/fillgafl_log.txt";
-                scr += QString("(progn (setq *oc-log-path* \"%1\")(princ))\n").arg(logPath);
+
+            job.sheetNum = sheet;
+            job.startRow = dpOffset;
+            job.dpCount = dpThisSheet;
+
+            if (!copyTemplate(vorlage, gaFlPath)) {
+                logError(QString("GA-FL-Vorlage nicht kopierbar: %1").arg(gaFlName));
+                ++counts.errors;
+            } else if (processNewDrawing(gaFlPath, counts, [&](OcDrawing& dwg) {
+                           dwg.freezeLayers(frozenLayers);
+                           const OcFillResult filled =
+                               dwg.fillGaFl(job, reference, fillState, &fillLog);
+                           if (!filled.ok) {
+                               logError(QString("%1: %2").arg(gaFlName, filled.error));
+                           }
+                       })) {
+                ++counts.gaFl;
             }
-            
-            // Freeze non-content layers
-            scr += "(progn\n"
-                   "  (setq layers (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))))\n"
-                   "  (foreach ln '(\"GA-Konstruktionslinie\" \"GA-MBE-Grafik\")\n"
-                   "    (if (tblsearch \"LAYER\" ln)\n"
-                   "      (progn\n"
-                   "        (setq lo (vla-item layers ln))\n"
-                   "        (vla-put-Freeze lo :vlax-true)\n"
-                   "      )\n"
-                   "    )\n"
-                   "  )\n"
-                   "  (princ)\n"
-                   ")\n";
-            
-            // Load FillGaFl.lsp
-            scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-            
-            // Set global variables for FillGaFl
-            scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
-                   .arg(srcCsvPath);
-            scr += QString("(progn (setq *oc-fill-ref-csv-path* \"%1\")(princ))\n")
-                   .arg(refCsvPath);
-            scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n")
-                   .arg(sheet);
-            scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n")
-                   .arg(dpOffset);
-            scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n")
-                   .arg(dpThisSheet);
-            
-            // Execute fill
-            scr += "(progn (FillGaFl)(princ))\n";
-            
-            // Save and close
-            scr += lispSave();
-            scr += lispClose();
-            
+
             dpOffset += dpThisSheet;
-            totalSheets++;
+            stepDone(gaFlName);
         }
     }
-    
-    log(QString("GA-FL-Erzeugungs-SCR generiert: %1 Blaetter fuer %2 Zeichnungen")
-        .arg(totalSheets).arg(drawings.size()));
-    
-    return scr;
+    fillLog.close();
+
+    log(QString("GA-FL: %1 Blaetter fuer %2 Zeichnungen erzeugt")
+        .arg(counts.gaFl).arg(drawings.size()));
+    if (!fillState.missingRefs.isEmpty()) {
+        logError(QString("%1 fehlende DP-Referenz(en) wurden mit 0 belegt")
+                 .arg(fillState.missingRefs.size()));
+    }
 }
 
 // ============================================================================
-// Phase 2: Generate Summary Sheet SCR
+// Phase 3: Summenblaetter planen
 // ============================================================================
 
-QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& drawings) {
-    QString scr;
-
-    // Liste der geplanten Summenblaetter fuer die anschliessende
-    // Textbreitenanpassung (die Dateien existieren noch nicht auf der Platte).
+void OpenCirtTab::planSummarySheets(const QVector<SourceDrawingInfo>& drawings) {
+    // Schreibt je Summenebene eine CSV in den Tempordner und merkt sich, welche
+    // Blaetter daraus entstehen (m_summaryJobs). Erzeugt und befuellt werden
+    // sie in createSummen().
+    m_summaryJobs.clear();
     m_plannedSummarySheets.clear();
 
-    QString vorlage = templatePath(OpenCirtConfig::GA_FL_VORLAGE_DWG);
-    vorlage.replace("\\", "/");
+    auto addJob = [this](const QString& target, const QString& csvPath,
+                         int sheetNum, int startRow, int dpCount) {
+        SummaryJob job;
+        job.target = target;
+        job.csvPath = csvPath;
+        job.sheetNum = sheetNum;
+        job.startRow = startRow;
+        job.dpCount = dpCount;
+        m_summaryJobs.append(job);
+        m_plannedSummarySheets << target;
+    };
 
-    QString fillLspPath = scriptsPath() + "/FillGaFl.lsp";
-    fillLspPath.replace("\\", "/");
-    
-    if (m_extractTempDir.isEmpty()) {
-        m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                           + "/OpenCirt_extract";
+    if (!extractDirUsable()) {
+        logError("Summenblaetter: der Ordner der Extraktionsdaten gehoert nicht zu diesem Lauf");
+        return;
     }
     QString tempDir = m_extractTempDir;
     tempDir.replace("\\", "/");
@@ -3442,23 +3536,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                                       .arg(gewerkName)
                                       .arg(sheet, 2, 10, QChar('0'));
                     QString sumPath = gewerkFolderPath + "/" + sumName;
-                    m_plannedSummarySheets << sumPath;
-                    
-                    scr += QString("; --- Gewerk-Summe: %1/%2 Blatt %3 (%4 Anlagen) ---\n")
-                           .arg(aspName, gewerkName).arg(sheet).arg(dpThis);
-                    scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                           .arg(vorlage, sumPath);
-                    scr += QString("_.OPEN \"%1\"\n").arg(sumPath);
-                    scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
-                    scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-                    scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n").arg(gwCsvSlash);
-                    scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
-                    scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
-                    scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(gwDpOffset);
-                    scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThis);
-                    scr += "(progn (FillGaFl)(princ))\n";
-                    scr += lispSave();
-                    scr += lispClose();
+                    addJob(sumPath, gwCsvSlash, sheet, gwDpOffset, dpThis);
                     
                     gwDpOffset += dpThis;
                 }
@@ -3573,25 +3651,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                               .arg(aspDisplayName)
                               .arg(sheet, 2, 10, QChar('0'));
             QString sumPath = aspFolder + "/" + sumName;
-            m_plannedSummarySheets << sumPath;
-            
-            scr += QString("; --- ASP-Summe: %1 Blatt %2/%3 (%4 Gewerke) ---\n")
-                   .arg(aspName).arg(sheet).arg(aspSheetCount).arg(dpThisSheet);
-            
-            scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                   .arg(vorlage, sumPath);
-            scr += QString("_.OPEN \"%1\"\n").arg(sumPath);
-            scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
-            scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-            scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
-                   .arg(aspCsvPathSlash);
-            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
-            scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
-            scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
-            scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
-            scr += "(progn (FillGaFl)(princ))\n";
-            scr += lispSave();
-            scr += lispClose();
+            addJob(sumPath, aspCsvPathSlash, sheet, dpOffset, dpThisSheet);
             
             dpOffset += dpThisSheet;
             aspSumSheetTotal++;
@@ -3738,25 +3798,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                               .arg(losDisplayName)
                               .arg(sheet, 2, 10, QChar('0'));
             QString sumPath = losFolderSlash + "/" + sumName;
-            m_plannedSummarySheets << sumPath;
-            
-            scr += QString("; --- Los-Summe: %1 Blatt %2/%3 (%4 ASPs) ---\n")
-                   .arg(losDisplayName).arg(sheet).arg(losSheetCount).arg(dpThisSheet);
-            
-            scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                   .arg(vorlage, sumPath);
-            scr += QString("_.OPEN \"%1\"\n").arg(sumPath);
-            scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
-            scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-            scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
-                   .arg(losCsvSlash);
-            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
-            scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
-            scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
-            scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
-            scr += "(progn (FillGaFl)(princ))\n";
-            scr += lispSave();
-            scr += lispClose();
+            addJob(sumPath, losCsvSlash, sheet, dpOffset, dpThisSheet);
             
             dpOffset += dpThisSheet;
             losSumSheetTotal++;
@@ -3899,31 +3941,12 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             QString sumName = QString("0001 Projekt_Summe_%1.dwg")
                               .arg(sheet, 2, 10, QChar('0'));
             QString sumPath = drawingsDir + "/" + sumName;
-            m_plannedSummarySheets << sumPath;
-            
-            scr += QString("; --- Projekt-Summe Blatt %1/%2 (%3 %4) ---\n")
-                   .arg(sheet).arg(projektSheets).arg(dpThisSheet)
-                   .arg(hasLosStructure ? "Lose" : "ASPs");
-            
-            scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                   .arg(vorlage, sumPath);
-            scr += QString("_.OPEN \"%1\"\n").arg(sumPath);
-            scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
-            scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-            scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n")
-                   .arg(projektCsvSlash);
-            scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
-            scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
-            scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(dpOffset);
-            scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
-            scr += "(progn (FillGaFl)(princ))\n";
-            scr += lispSave();
-            scr += lispClose();
+            addJob(sumPath, projektCsvSlash, sheet, dpOffset, dpThisSheet);
             
             dpOffset += dpThisSheet;
         }
         
-        log(QString("Summen-SCR generiert: %1 ASP + %2 Los + %3 Projekt-Summen")
+        log(QString("Summenblaetter geplant: %1 ASP + %2 Los + %3 Projekt-Summen")
             .arg(aspSumSheetTotal).arg(losSumSheetTotal).arg(projektSheets));
     }
 
@@ -4042,24 +4065,7 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
                                   .arg(losDisplayName)
                                   .arg(sheet, 2, 10, QChar('0'));
                 QString sumPath = drawingsDir + "/" + sumName;
-                m_plannedSummarySheets << sumPath;
-
-                scr += QString("; --- Los-Gewerke-Summe: %1 Blatt %2/%3 (%4 Gewerke) ---\n")
-                       .arg(losDisplayName).arg(sheet).arg(lgSheets).arg(dpThisSheet);
-
-                scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-                       .arg(vorlage, sumPath);
-                scr += QString("_.OPEN \"%1\"\n").arg(sumPath);
-                scr += QString("(progn (setq *oc-log-path* \"%1/fillgafl_log.txt\")(princ))\n").arg(tempDir);
-                scr += QString("(progn (load \"%1\")(princ))\n").arg(fillLspPath);
-                scr += QString("(progn (setq *oc-fill-csv-path* \"%1\")(princ))\n").arg(lgCsvSlash);
-                scr += "(progn (setq *oc-fill-ref-csv-path* nil)(princ))\n";  // Summen: ohne Referenz
-                scr += QString("(progn (setq *oc-fill-sheet-num* %1)(princ))\n").arg(sheet);
-                scr += QString("(progn (setq *oc-fill-start-row* %1)(princ))\n").arg(lgOffset);
-                scr += QString("(progn (setq *oc-fill-dp-count* %1)(princ))\n").arg(dpThisSheet);
-                scr += "(progn (FillGaFl)(princ))\n";
-                scr += lispSave();
-                scr += lispClose();
+                addJob(sumPath, lgCsvSlash, sheet, lgOffset, dpThisSheet);
 
                 lgOffset += dpThisSheet;
                 losGewerkSheetTotal++;
@@ -4070,8 +4076,6 @@ QString OpenCirtTab::generateSummarySheetScr(const QVector<SourceDrawingInfo>& d
             log(QString("Gewerke-Summen je Los: %1 Blaetter").arg(losGewerkSheetTotal));
         }
     }
-
-    return scr;
 }
 
 // ============================================================================
@@ -4122,20 +4126,9 @@ void OpenCirtTab::applyFolderHierarchie(SourceDrawingInfo& info, const QString& 
 // Referenz neu. Wer ein GA-FL-Blatt von Hand korrigiert, bekommt die Korrektur
 // in den Summen wieder - und die Summen brauchen die GA_FL_VORLAGE nicht.
 //
-// Ablauf: Das Phase-2-Skript ruft als letzte Zeile den Befehl OC_PHASE3_PREPARE
-// auf (-> preparePhase3), der die Blaetter per Side-Database liest, die
-// Summen-CSVs schreibt und das Phase-3-Skript bereitlegt. onPhase3StartTimer
-// startet es per executeScrFile, sobald das Phase-2-Skript beendet ist
-// (CMDACTIVE = 0) - eine Skriptebene, kein _.SCRIPT aus dem Skript heraus.
-
-QString OpenCirtTab::phase3ScrPath() const {
-    QString dir = m_extractTempDir;
-    if (dir.isEmpty()) {
-        dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-              + "/OpenCirt_extract";
-    }
-    return dir + "/phase3.scr";
-}
+// Ablauf (createSummen): die fertigen GA-FL-Blaetter lesen, je Summenebene
+// eine CSV schreiben, daraus die Summenblaetter erzeugen und befuellen, zum
+// Schluss die Textbreiten aller GA-FL- und Summenblaetter anpassen.
 
 QVector<SourceDrawingInfo> OpenCirtTab::readGaFlSheetsForSummary(QStringList& sheetPaths) {
     QVector<SourceDrawingInfo> result;
@@ -4240,88 +4233,70 @@ QVector<SourceDrawingInfo> OpenCirtTab::readGaFlSheetsForSummary(QStringList& sh
     return result;
 }
 
-void OpenCirtTab::preparePhase3() {
-    // Laeuft innerhalb des Phase-2-Skripts (Befehl OC_PHASE3_PREPARE) als
-    // dessen letzte Zeile. Das Phase-3-Skript entsteht in jedem Zweig - auch
-    // ohne lesbare Blaetter, damit das Cleanup der Systemvariablen (FILEDIA,
-    // CMDECHO, EXPERT) auf jeden Fall laeuft.
-    if (m_extractTempDir.isEmpty()) {
-        m_extractTempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                           + "/OpenCirt_extract";
-    }
-    QDir().mkpath(m_extractTempDir);
-
-    QString scr;
-    scr += "; === Phase 3: Summen aus den fertigen GA-FL-Blaettern ===\n";
-
+void OpenCirtTab::createSummen(RunCounts& counts) {
     log("Phase 3: GA-FL-Blaetter lesen...");
     QStringList sheetPaths;
     QVector<SourceDrawingInfo> sheets = readGaFlSheetsForSummary(sheetPaths);
 
     if (sheets.isEmpty()) {
         logError("Phase 3: keine lesbaren GA-FL-Blaetter - es werden keine Summenblaetter erzeugt");
-    } else {
-        log("Summenblaetter erzeugen...");
-        scr += "; === Summenblaetter ===\n";
-        scr += generateSummarySheetScr(sheets);
-
-        // Textbreiten ueber alle GA-FL-Blaetter und alle geplanten Summenblaetter.
-        // Die Summenblaetter existieren erst, wenn phase3.scr sie erzeugt hat,
-        // deshalb aus dem Plan statt per Verzeichnissuche.
-        QStringList textwidthTargets = sheetPaths;
-        textwidthTargets += m_plannedSummarySheets;
-        QString textwidthScr = generateTextwidthScrFor(textwidthTargets);
-        if (!textwidthScr.isEmpty()) {
-            scr += "; === Textbreitenanpassung ===\n";
-            scr += textwidthScr;
-        }
-    }
-
-    // Systemvariablen zuruecksetzen - letzter Schritt des Gesamtlaufs
-    scr += "; === Cleanup ===\n";
-    scr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
-    scr += "(progn (setvar \"CMDECHO\" 1)(princ))\n";
-    scr += "(progn (setvar \"EXPERT\" 0)(princ))\n";
-
-    // Kopie zum Nachlesen im Tempordner; gestartet wird aus m_phase3Scr.
-    {
-        QFile file(phase3ScrPath());
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QTextStream stream(&file);
-            stream << scr;
-        }
-    }
-
-    m_phase3Scr = scr;
-    m_phase3WaitLogged = false;
-    m_phase3StartTimer->start();
-    logSuccess("Phase 3 vorbereitet - startet, sobald Phase 2 beendet ist.");
-}
-
-void OpenCirtTab::onPhase3StartTimer() {
-    if (m_phase3Scr.isEmpty()) {
-        m_phase3StartTimer->stop();
         return;
     }
 
-    // Erst starten, wenn kein Skript und kein Befehl mehr aktiv ist. Ohne
-    // Obergrenze: solange BricsCAD beschaeftigt ist, wird gewartet. Bleibt ein
-    // Prompt offen, steht das einmal im Log und Esc loest es auf.
-    struct resbuf rb;
-    if (acedGetVar(_T("CMDACTIVE"), &rb) == RTNORM && rb.resval.rint != 0) {
-        if (!m_phase3WaitLogged) {
-            log("Phase 3: warte auf Skriptende (CMDACTIVE != 0)...");
-            m_phase3WaitLogged = true;
-        }
-        return;
-    }
+    log("Summenblaetter erzeugen...");
+    planSummarySheets(sheets);
 
-    m_phase3StartTimer->stop();
-    const QString scr = m_phase3Scr;
-    m_phase3Scr.clear();
-    if (executeScrFile(scr, "Projekt Phase 3")) {
-        logSuccess("Phase 3 gestartet - BricsCAD erzeugt die Summenblaetter.");
+    const QString vorlage = templatePath(OpenCirtConfig::GA_FL_VORLAGE_DWG);
+    const QVector<QStringList> noReference;   // Summen: ohne Referenz
+
+    OcLogFile fillLog;
+    fillLog.open(m_extractTempDir + "/fillgafl_log.txt", false);
+    OcFillState fillState;
+
+    beginPhase("Summenblaetter", m_summaryJobs.size());
+    for (const SummaryJob& summary : m_summaryJobs) {
+        const QString name = QFileInfo(summary.target).fileName();
+        const QStringList lines = OcEngine::readLines(summary.csvPath);
+
+        OcFillJob job;
+        job.rows = OcEngine::rowsFromLines(lines);
+        job.plankopf = OcEngine::plankopfFromLines(lines);
+        job.useReference = false;
+        job.sheetNum = summary.sheetNum;
+        job.startRow = summary.startRow;
+        job.dpCount = summary.dpCount;
+
+        if (!copyTemplate(vorlage, summary.target)) {
+            logError(QString("GA-FL-Vorlage nicht kopierbar: %1").arg(name));
+            ++counts.errors;
+        } else if (processNewDrawing(summary.target, counts, [&](OcDrawing& dwg) {
+                       const OcFillResult filled =
+                           dwg.fillGaFl(job, noReference, fillState, &fillLog);
+                       if (!filled.ok) {
+                           logError(QString("%1: %2").arg(name, filled.error));
+                       }
+                   })) {
+            ++counts.summen;
+        }
+        stepDone(name);
     }
+    fillLog.close();
+
+    // Textbreiten ueber alle GA-FL-Blaetter und alle Summenblaetter
+    QStringList textwidthTargets = sheetPaths;
+    textwidthTargets += m_plannedSummarySheets;
+    log(QString("Textbreiten anpassen: %1 Blaetter (GA-FL + Summen)")
+        .arg(textwidthTargets.size()));
+
+    beginPhase("Textbreiten", textwidthTargets.size());
+    for (const QString& path : textwidthTargets) {
+        processDrawing(path, counts, [&](OcDrawing& dwg) {
+            const OcTextWidthResult adjusted = dwg.textBreitenAnpassen();
+            counts.textbreiten += adjusted.blockCount + adjusted.modelCount;
+        });
+        stepDone(QFileInfo(path).fileName());
+    }
+    log(QString("Textbreiten: %1 Texte angepasst").arg(counts.textbreiten));
 }
 
 QString OpenCirtTab::findInhaltVorlage() {
@@ -4454,26 +4429,26 @@ QVector<OpenCirtTab::TocEntry> OpenCirtTab::buildTocEntries(
 }
 
 /**
- * @brief Generate SCR to create Inhaltsverzeichnis DWG pages.
+ * @brief Create the Inhaltsverzeichnis DWG pages.
  *
  * The template is a complete DIN-A2 sheet that already carries the 22-row
  * entry block in its final position, so no INSERT and no geometry maths are
- * needed. Per page: copy the template, open it, write the row attributes,
- * set the Plankopf master data, save and close.
+ * needed. Per page: copy the template, write the row attributes, set the
+ * Plankopf master data, save.
  *
  * Row attributes are addressed by tag: OC_INHALT_<FIELD>_<NN>, NN = 01..22.
  * Rows left over on the last page keep the template's empty attributes.
+ *
+ * @return number of pages created, -1 if the template is missing
  */
-QString OpenCirtTab::generateInhaltScr(
+int OpenCirtTab::createInhaltPages(
     const QVector<TocEntry>& entries, int tocPageCount)
 {
-    QString scr;
-
     QString vorlage = findInhaltVorlage();
     if (vorlage.isEmpty()) {
         logError("Inhaltsverzeichnis: Vorlage OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS*.dwg "
                  "nicht im Vorlagenordner gefunden");
-        return scr;
+        return -1;
     }
 
     QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
@@ -4483,30 +4458,21 @@ QString OpenCirtTab::generateInhaltScr(
     // Vorlage kopiert; ohne diesen Schritt bliebe im Plankopf der Vorlagenstand
     // stehen (AG/AN/PR leer bzw. Platzhalter).
     ensurePlankopfCsvLoaded();
-    QString plankopfSnippet = m_plankopfCsvData.isEmpty()
-                              ? QString()
-                              : generateSetPlankopfSnippet(m_plankopfCsvData);
+    const OcPairs plankopfPairs = pairsFromMap(m_plankopfCsvData);
 
+    RunCounts counts;
+    int created = 0;
     int entryIdx = 0;
 
+    beginPhase("Inhaltsverzeichnis", tocPageCount);
     for (int page = 1; page <= tocPageCount; ++page) {
         QString targetName = QString("0000 Projekt_Inhalt_%1.dwg")
                              .arg(page, 2, 10, QChar('0'));
         QString targetPath = drawingsDir + "/" + targetName;
 
-        scr += QString("; --- Inhaltsverzeichnis Seite %1/%2 ---\n")
-               .arg(page).arg(tocPageCount);
-
-        // 1. Copy template
-        scr += QString("(progn (vl-file-copy \"%1\" \"%2\" T)(princ))\n")
-               .arg(vorlage, targetPath);
-
-        // 2. Open
-        scr += QString("_.OPEN \"%1\"\n").arg(targetPath);
-
-        // 3. Collect this page's tag/value pairs
+        // Collect this page's tag/value pairs
         int rowsThisPage = qMin(OpenCirtConfig::INHALT_ROWS_PER_PAGE, entries.size() - entryIdx);
-        QStringList pairs;
+        OcPairs pairs;
 
         for (int row = 0; row < rowsThisPage && entryIdx < entries.size(); ++row, ++entryIdx) {
             const TocEntry& e = entries[entryIdx];
@@ -4514,11 +4480,10 @@ QString OpenCirtTab::generateInhaltScr(
 
             auto addPair = [&pairs, &suffix](const QString& field, const QString& value) {
                 if (value.isEmpty()) return;
-                QString escaped = value;
-                escaped.replace("\\", "\\\\");
-                escaped.replace("\"", "");
-                pairs << QString("    (\"OC_INHALT_%1%2\" . \"%3\")")
-                         .arg(field, suffix, escaped);
+                // Anfuehrungszeichen fielen beim Weg ueber das LISP weg
+                QString cleaned = value;
+                cleaned.remove(QLatin1Char('"'));
+                pairs << qMakePair(QString("OC_INHALT_%1%2").arg(field, suffix), cleaned);
             };
 
             addPair("LOS", e.los);
@@ -4530,72 +4495,47 @@ QString OpenCirtTab::generateInhaltScr(
                 addPair("SEITE", QString::number(e.seite));
         }
 
-        // 4. Write the values into the entry block already present in the sheet.
-        //    The block is matched by wildcard, so a later _V_6 needs no code change.
-        if (!pairs.isEmpty()) {
-            scr += "(progn\n";
-            scr += "  (setq oc_vals '(\n";
-            scr += pairs.join("\n") + "\n";
-            scr += "  ))\n";
-            scr += "  (setq oc_hits 0)\n";
-            scr += "  (setq oc_ss (ssget \"_X\" '((0 . \"INSERT\"))))\n";
-            scr += "  (if oc_ss\n";
-            scr += "    (progn\n";
-            scr += "      (setq oc_i 0)\n";
-            scr += "      (while (< oc_i (sslength oc_ss))\n";
-            scr += "        (setq oc_obj (vlax-ename->vla-object (ssname oc_ss oc_i)))\n";
-            scr += "        (setq oc_name (strcase\n";
-            scr += "          (if (vlax-property-available-p oc_obj 'EffectiveName)\n";
-            scr += "            (vla-get-EffectiveName oc_obj)\n";
-            scr += "            (vla-get-Name oc_obj))))\n";
-            scr += QString("        (if (and (wcmatch oc_name \"%1\")\n")
-                   .arg(OpenCirtConfig::INHALT_BLOCK_PATTERN);
-            scr += "                 (vlax-property-available-p oc_obj 'HasAttributes)\n";
-            scr += "                 (= (vla-get-HasAttributes oc_obj) :vlax-true))\n";
-            scr += "          (foreach oc_att (vlax-invoke oc_obj 'GetAttributes)\n";
-            scr += "            (setq oc_p (assoc (strcase (vla-get-TagString oc_att)) oc_vals))\n";
-            scr += "            (if oc_p\n";
-            scr += "              (progn (vla-put-TextString oc_att (cdr oc_p))\n";
-            scr += "                     (setq oc_hits (1+ oc_hits))))\n";
-            scr += "          )\n";
-            scr += "        )\n";
-            scr += "        (setq oc_i (1+ oc_i))\n";
-            scr += "      )\n";
-            scr += "    )\n";
-            scr += "  )\n";
-            scr += "  (if (= oc_hits 0)\n";
-            scr += QString("    (princ \"\\nWARNUNG openCirt: Eintragsblock %1 nicht gefunden "
-                           "oder Attribut-Tags ohne Zeilenindex.\"))\n")
-                   .arg(OpenCirtConfig::INHALT_BLOCK_PATTERN);
-            scr += "  (princ)\n";
-            scr += ")\n";
-        }
-
-        // 5. Plankopf-Stammdaten aus CSV (AG, AN, PR, ERSTELLER ...)
-        scr += plankopfSnippet;
-
-        // 6. Plankopf-Zeichnungsnummer. Bewusst nach dem CSV-Snippet, damit dieser
-        //    Wert gewinnt, falls die plankopfdaten.csv selbst ZEICHNUNGSNUMMER fuehrt.
-        //    Die Eintragszeilen nutzen OC_INHALT_ZEICHNUNGSNUMMER_<NN> und bleiben
-        //    davon unberuehrt.
-        QMap<QString, QString> inhaltPlankopf;
-        inhaltPlankopf["ZEICHNUNGSNUMMER"] =
+        // Plankopf-Zeichnungsnummer. Bewusst nach den Stammdaten, damit dieser
+        // Wert gewinnt, falls die plankopfdaten.csv selbst ZEICHNUNGSNUMMER fuehrt.
+        // Die Eintragszeilen nutzen OC_INHALT_ZEICHNUNGSNUMMER_<NN> und bleiben
+        // davon unberuehrt.
+        OcPairs inhaltPlankopf;
+        inhaltPlankopf << qMakePair(QStringLiteral("ZEICHNUNGSNUMMER"),
             (tocPageCount > 1)
             ? QString("Inhaltsverzeichnis Seite %1 von %2").arg(page).arg(tocPageCount)
-            : QString("Inhaltsverzeichnis");
-        scr += generateSetPlankopfSnippet(inhaltPlankopf);
+            : QString("Inhaltsverzeichnis"));
 
-        // 7. Save and close
-        scr += lispSave();
-        scr += lispClose();
+        if (!copyTemplate(vorlage, targetPath)) {
+            logError(QString("Inhaltsverzeichnis-Vorlage nicht kopierbar: %1").arg(targetName));
+        } else if (processNewDrawing(targetPath, counts, [&](OcDrawing& dwg) {
+                       // Der Eintragsblock steht bereits im Blatt. Er wird am
+                       // Namen mit Platzhalter erkannt, damit eine spaetere
+                       // Fassung _V_6 keine Aenderung am Code braucht.
+                       if (!pairs.isEmpty()) {
+                           const int hits = dwg.setAttributes(
+                               pairs, OpenCirtConfig::INHALT_BLOCK_PATTERN, true);
+                           if (hits == 0) {
+                               log(QString("Eintragsblock %1 nicht gefunden oder Attribut-Tags "
+                                           "ohne Zeilenindex: %2")
+                                   .arg(OpenCirtConfig::INHALT_BLOCK_PATTERN, targetName), "WARN");
+                           }
+                       }
+                       if (!plankopfPairs.isEmpty()) {
+                           dwg.setAttributes(plankopfPairs);
+                       }
+                       dwg.setAttributes(inhaltPlankopf);
+                   })) {
+            ++created;
+        }
+        stepDone(targetName);
     }
 
-    log(QString("Inhalt-SCR: %1 Seiten, %2 Eintraege%3")
-        .arg(tocPageCount).arg(entries.size())
-        .arg(plankopfSnippet.isEmpty() ? ", ohne Plankopf-Stammdaten"
-                                       : QString(", inkl. %1 Plankopf-Attributen")
-                                         .arg(m_plankopfCsvData.size())));
-    return scr;
+    log(QString("Inhaltsverzeichnis: %1 Seiten, %2 Eintraege%3")
+        .arg(created).arg(entries.size())
+        .arg(plankopfPairs.isEmpty() ? ", ohne Plankopf-Stammdaten"
+                                     : QString(", inkl. %1 Plankopf-Attributen")
+                                       .arg(m_plankopfCsvData.size())));
+    return created;
 }
 
 // ============================================================================
@@ -4847,11 +4787,13 @@ QString OpenCirtTab::generateDsdFile(const QStringList& orderedDwgs) {
     QString projektName = QDir(m_projectRoot).dirName();
     QString plotDir = m_projectRoot + "/06- Plot";
     QDir().mkpath(plotDir);  // Create if not exists
+    // Pfade im DSD in der Schreibweise des Betriebssystems:
+    // Windows mit Backslash, Linux mit Schraegstrich
     QString pdfPath = plotDir + "/" + projektName + ".pdf";
-    pdfPath.replace("/", "\\");
+    pdfPath = QDir::toNativeSeparators(pdfPath);
     
     QString outDir = plotDir;
-    outDir.replace("/", "\\");
+    outDir = QDir::toNativeSeparators(outDir);
     
     QString dsd;
     dsd += "[DWF6Version]\n";
@@ -4862,8 +4804,7 @@ QString OpenCirtTab::generateDsdFile(const QStringList& orderedDwgs) {
     int sheetIdx = 0;
     for (const QString& dwgPath : orderedDwgs) {
         QString fileName = QFileInfo(dwgPath).completeBaseName();
-        QString dwgWin = dwgPath;
-        dwgWin.replace("/", "\\");
+        QString dwgWin = QDir::toNativeSeparators(dwgPath);
         
         // Read actual layout name from DWG (e.g. "DIN-A2", "DIN-A1")
         QString layoutName = getFirstPaperSpaceLayoutName(dwgPath);
@@ -5006,88 +4947,35 @@ void OpenCirtTab::onPublishPdf() {
         .arg(entries.size()).arg(tocPageCount));
     
     if (tocPageCount > 0) {
-        // Generate Inhalt SCR (asynchronous via _.SCRIPT)
-        QString inhaltScr = generateInhaltScr(entries, tocPageCount);
-        if (inhaltScr.trimmed().isEmpty()) {
-            logError("Inhalt-SCR-Generierung fehlgeschlagen");
+        beginRun(m_btnPublish, "Inhalt wird erstellt...");
+        const int pages = createInhaltPages(entries, tocPageCount);
+        endRun();
+        if (pages < tocPageCount) {
+            logError("Inhaltsverzeichnis konnte nicht vollstaendig erzeugt werden - "
+                     "PDF wird nicht publiziert");
             return;
         }
-        
-        // Add system variable setup/restore + completion marker
-        QString fullScr;
-        fullScr += "(progn (setvar \"FILEDIA\" 0)(princ))\n";
-        fullScr += "(progn (setvar \"CMDECHO\" 0)(princ))\n";
-        fullScr += "(progn (setvar \"EXPERT\" 5)(princ))\n";
-        fullScr += inhaltScr;
-        fullScr += "(progn (setvar \"FILEDIA\" 1)(princ))\n";
-        fullScr += "(progn (setvar \"CMDECHO\" 1)(princ))\n";
-        fullScr += "(progn (setvar \"EXPERT\" 0)(princ))\n";
-        
-        // Completion marker
-        QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-        m_publishMarkerPath = tempPath + "/OpenCirt_inhalt_complete.marker";
-        QString markerSlash = m_publishMarkerPath;
-        markerSlash.replace("\\", "/");
-        QFile::remove(m_publishMarkerPath);  // Clean old marker
-        
-        fullScr += QString("(progn (setq f (open \"%1\" \"w\"))(write-line \"INHALT_COMPLETE\" f)(close f)(princ))\n")
-                   .arg(markerSlash);
-        
-        // Store DWGs for later (publish after Inhalt is done)
-        m_pendingPublishDwgs = orderedDwgs;
-        
-        // Execute SCR and start polling
-        if (executeScrFile(fullScr, "Inhaltsverzeichnis")) {
-            m_btnPublish->setEnabled(false);
-            m_btnPublish->setText("Inhalt wird erstellt...");
-            m_publishTimer->start();
-            logSuccess("Inhaltsverzeichnis wird erzeugt. PDF-Publish startet automatisch.");
+        logSuccess("Inhaltsverzeichnis erzeugt.");
+
+        // Re-collect DWGs (now includes the new Inhalt pages)
+        QStringList finalDwgs = collectOrderedDwgsForPublish();
+
+        log(QString("Publish-Reihenfolge (%1 Blaetter):").arg(finalDwgs.size()));
+        QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
+        for (int i = 0; i < finalDwgs.size(); ++i) {
+            QString rel = finalDwgs[i];
+            if (rel.startsWith(drawingsDir)) {
+                rel = rel.mid(drawingsDir.length() + 1);
+            }
+            log(QString("  %1. %2").arg(i + 1, 3).arg(rel));
         }
+
+        launchPublish(finalDwgs);
     } else {
         // No TOC entries -> publish directly
         log("Keine Inhaltseintraege gefunden - publiziere ohne Inhaltsverzeichnis.");
         launchPublish(orderedDwgs);
     }
-}
-
-/**
- * @brief Poll for Inhalt SCR completion, then launch PDF publish.
- */
-void OpenCirtTab::onPublishPollTimer() {
-    if (m_publishMarkerPath.isEmpty()) {
-        m_publishTimer->stop();
-        return;
-    }
-    
-    if (!QFile::exists(m_publishMarkerPath)) {
-        return;  // Still running
-    }
-    
-    // Inhalt generation complete
-    m_publishTimer->stop();
-    QFile::remove(m_publishMarkerPath);
-    m_publishMarkerPath.clear();
-    
-    logSuccess("Inhaltsverzeichnis erzeugt.");
-    
-    // Re-collect DWGs (now includes the new Inhalt pages)
-    QStringList finalDwgs = collectOrderedDwgsForPublish();
-    
-    log(QString("Publish-Reihenfolge (%1 Blaetter):").arg(finalDwgs.size()));
-    QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    for (int i = 0; i < finalDwgs.size(); ++i) {
-        QString rel = finalDwgs[i];
-        if (rel.startsWith(drawingsDir)) {
-            rel = rel.mid(drawingsDir.length() + 1);
-        }
-        log(QString("  %1. %2").arg(i + 1, 3).arg(rel));
-    }
-    
-    launchPublish(finalDwgs);
-    
-    m_btnPublish->setText("PDF publizieren");
-    m_btnPublish->setEnabled(true);
-    m_pendingPublishDwgs.clear();
 }
 
 /**
@@ -5170,6 +5058,12 @@ void OpenCirtTab::launchPublish(const QStringList& orderedDwgs) {
         "  (princ))\n")
         .arg(plotSlash, markerSlash);
     scr += "_.QUIT\n";
+#ifndef _WIN32
+    // Unter Linux gilt die Zeichnung der Batch-Instanz nach dem Publizieren als
+    // geaendert; QUIT fragt dann "Aenderungen verwerfen?" und die Instanz
+    // bliebe offen. Die Antwort wird nur gelesen, wenn die Frage kommt.
+    scr += "_Y\n";
+#endif
     
     // Write SCR to temp file
     QFile scrFile(scrPath);
@@ -5184,10 +5078,10 @@ void OpenCirtTab::launchPublish(const QStringList& orderedDwgs) {
     // Launch separate BricsCAD batch instance: /b "dwg" "scr"
     QString bricscadExe = QCoreApplication::applicationFilePath();
     QString firstDwg = orderedDwgs.first();
-    QString dwgPathWin = firstDwg;
-    dwgPathWin.replace("/", "\\");
-    QString scrPathWin = scrPath;
-    scrPathWin.replace("/", "\\");
+    // Schreibweise des Betriebssystems; der Aufruf /b "dwg" "scr" ist unter
+    // Windows und Linux derselbe
+    QString dwgPathWin = QDir::toNativeSeparators(firstDwg);
+    QString scrPathWin = QDir::toNativeSeparators(scrPath);
     
     QStringList args;
     args << "/b" << dwgPathWin << scrPathWin;

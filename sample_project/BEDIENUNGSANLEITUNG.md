@@ -43,17 +43,21 @@ Der gesamte Ablauf von der Schema-Zeichnung bis zum fertigen PDF-Planungspaket i
 
 ### 2.1 Plugin laden
 
-1. Die Datei `batchtool.brx` aus dem Ordner `00- BricsCAD Plugin/00- Windows Version/` in einen festen Speicherort kopieren (z.B. `C:\BricsCAD Plugins\`).
+1. Die Datei `batchtool-<Version>.brx` (z.B. `batchtool-1.7.1.brx`) aus dem Ordner `00- BricsCAD Plugin/00- Windows Version/` in einen festen Speicherort kopieren (z.B. `C:\BricsCAD Plugins\`).
 2. BricsCAD V26 starten.
 3. Befehl `APPLOAD` eingeben.
-4. Zur Datei `batchtool.brx` navigieren und „Laden" klicken.
+4. Zur Datei `batchtool-<Version>.brx` navigieren und „Laden" klicken.
 5. In der Kommandozeile erscheint: *„Batch Processing Plugin geladen. Befehl: BATCHTOOL"*
+
+**Linux:** Die Datei heißt dort `batchtool-<Version>.lrx` und liegt in `00- BricsCAD Plugin/01- Linux Version/`. Sie wird genauso über `APPLOAD` geladen; als Speicherort eignet sich zum Beispiel `~/BricsCAD Plugins/`. Weitere Dateien sind nicht nötig, das Plugin benutzt die Qt-Bibliotheken, die BricsCAD mitbringt. Die einzige Einschränkung unter Linux betrifft den LISP-Tab, siehe Abschnitt 12 unter „Bekannte Probleme".
 
 ### 2.2 Automatisch bei jedem Start laden
 
 1. `APPLOAD` aufrufen.
 2. Unten auf „Inhalt..." (Startup Suite) klicken.
-3. `batchtool.brx` zur Startup Suite hinzufügen.
+3. `batchtool-<Version>.brx` (Linux: `batchtool-<Version>.lrx`) zur Startup Suite hinzufügen.
+
+Der Dateiname trägt die Version. Nach einem Versionswechsel den Eintrag in der Startup Suite auf die neue Datei umstellen; die alte Datei kann weg.
 
 ### 2.3 Plugin öffnen
 
@@ -75,9 +79,10 @@ Projektname/
 ├── 01- Referenzen/             Konfigurationsdateien
 │   ├── BAS.csv                 BAS-Aufbau (Segmente)
 │   ├── GA_FL_VORLAGE.ods       Datenpunkt-Referenztabelle
+│   ├── Erstellliste_VORLAGE.csv Erstellliste mit allen Spalten und Beispielzeilen (Abschnitt 3.3)
 │   ├── plankopfdaten.csv       Plankopf-Stammdaten
 │   └── opencirt_config.json    Plugin-Konfiguration (automatisch)
-├── 02- Skripte/                LISP-Skripte (nicht ändern!)
+├── 02- Skripte/                LISP-Skripte (seit 1.7 nur noch für den LISP-Tab, siehe Abschnitt 11)
 │   ├── BmkNummerierung.lsp
 │   ├── ExtractDP.lsp
 │   ├── FillGaFl.lsp
@@ -94,9 +99,7 @@ Projektname/
 │   ├── OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg  Inhaltsverzeichnis-Blatt inkl. Eintragsblock
 │   ├── OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg   Blatt Änderungshistorie
 │   ├── OC_VORLAGE_GA_FL.dwg                GA-FL Blattvorlage
-│   ├── VDI3814_GA_FL_V_1_0.dwg             GA-FL Block (Quelle der Funktionsliste)
-│   ├── OC_VORLAGE_IO_BELEGUNG_V_1.ods      Vorlage IO-Liste
-│   └── OC_VORLAGE_SENSORLISTE_V_1.ods      Vorlage Sensorliste
+│   └── VDI3814_GA_FL_V_1_0.dwg             GA-FL Block (Quelle der Funktionsliste)
 ├── 05- Projekt Zeichnungen/    Hier entstehen die Zeichnungen
 │   └── 01 Los 1/
 │       └── 01 ASP01/
@@ -104,7 +107,7 @@ Projektname/
 │           ├── 02 RLT/         Gewerk: Raumlufttechnik
 │           ├── 03 HZG/         Gewerk: Heizung
 │           └── ...
-└── 06- Plot/                   Ausgabe (PDF)
+└── 06- Plot/                   Ausgabe (PDF, Listen als CSV)
 ```
 
 ### 3.2 Ordnerhierarchie der Zeichnungen
@@ -135,6 +138,61 @@ Los → ASP → Gewerk → Anlage
 Die Nummerierung am Anfang (01, 02, ...) bestimmt die Sortierung, in allen Ebenen.
 
 **Oberste Ebene = Projektblätter.** DWGs, die direkt in `05- Projekt Zeichnungen/` liegen (Projekt-Deckblatt, Revisionshistorie), gelten als Projektblätter, nicht als Quellzeichnungen: Sie erhalten im Gesamtlauf die Plankopf-Stammdaten aus `plankopfdaten.csv`, werden aber von BMK-Nummerierung, BAS-Generierung, Extraktion und GA-FL übersprungen. Der Dateiname ist dabei frei; ein Präfix `0000 ` sorgt dafür, dass sie im PDF vor Inhaltsverzeichnis und Summenblättern liegen.
+
+### 3.3 Projekt aus der Erstellliste aufbauen
+
+Statt die Zeichnungen von Hand anzulegen, lässt sich der ganze Ordner `05- Projekt Zeichnungen/` aus einer Liste erzeugen: **„Projekt aufbauen"** im openCirt-Tab kopiert je Zeile eine Vorlage aus `04- Vorlagen/`, legt sie in die Ordnerhierarchie Los / ASP / Gewerk / Anlage und trägt die Attributwerte der Zeile ein. Die Funktion ersetzt das frühere LISP-Skript `OC_PROJECT_BUILD`; Listen, die damit liefen, laufen unverändert.
+
+**ACHTUNG:** Der echte Lauf löscht vorher den gesamten Inhalt von `05- Projekt Zeichnungen/`. Vor dem Lauf den Projektordner sichern.
+
+#### Die Erstellliste
+
+Eine Vorlage mit allen Spalten liegt im Beispielprojekt: `01- Referenzen/Erstellliste_VORLAGE.csv`. Sie lässt sich in LibreOffice oder Excel öffnen, um eine eigene Liste zu beginnen (beim Speichern das Semikolon als Trennzeichen beibehalten). Ihre fünf Beispielzeilen zeigen die Zeilenarten: eine Projektzeile (Projekt-Deckblatt), eine Anlagenzeile mit Meldungsgruppe (Revisionshistorie mit Eintrag 1), eine Meldungszeile (Eintrag 2) und zwei Anlagenzeilen mit Blättern aus `OC_VORLAGE_DIN_A2_V14`. Mit „Projekt aufbauen" entstehen daraus vier Blätter in `00 Allgemein/` und `01 Los 1/`. Dabei wird auch das mitgelieferte Beispielblatt mit seinen Datenpunkten gelöscht; zum Ausprobieren also die Vorschau nehmen oder auf einer Kopie des Beispielprojekts arbeiten.
+
+Eine CSV-Datei mit Semikolon als Trennzeichen, gespeichert als UTF-8 (mit oder ohne BOM) oder Windows-1252 – die Kodierung wird erkannt und steht im Log. Zeile 1 ist die Kopfzeile. Die Spalten werden am Namen erkannt, nicht an der Position; Groß-/Kleinschreibung und ein Doppelpunkt am Ende spielen keine Rolle (`Dateiname:` = `DATEINAME`).
+
+| Spalte | Bedeutung |
+|---|---|
+| `Pos.`, `Index` | optional, werden ignoriert |
+| `Vorlage` | Name der Vorlage ohne `.dwg`; gesucht wird in `04- Vorlagen/` samt Unterordnern |
+| `Los`, `ASP`, `Gewerk`, `Anlage` | die vier Ordnerebenen |
+| `Dateiname` | Name der Zeichnung ohne `.dwg`; die laufende Nummer davor vergibt das Plugin |
+| alle übrigen | Attribut-Tags. Der Wert der Zelle wird in jedes Attribut mit diesem Tag geschrieben – auch ein leerer Wert |
+
+Ordner und Dateien erhalten ihre Nummer in der Reihenfolge, in der sie in der Liste zum ersten Mal vorkommen: Ordner zweistellig ab `00`, Dateien zweistellig, ab 100 Blättern in einem Ordner dreistellig.
+
+#### Zeilenarten
+
+| Zeile | Erkennungsmerkmal | Wirkung |
+|---|---|---|
+| Anlagenzeile | Vorlage, Dateiname und alle vier Ebenen gefüllt | erzeugt ein Blatt in `NN Los/NN ASP/NN Gewerk/NN Anlage/` |
+| Projektzeile | Vorlage und Dateiname gefüllt, alle vier Ebenen leer | erzeugt ein Projektblatt auf der obersten Ebene, Dateiname wörtlich ohne Nummer |
+| Stempelzeile | Vorlage und Dateiname leer, `OC_ANLAGE` gefüllt | füllt einen weiteren Stempel des zuletzt erzeugten Blatts |
+| Meldungszeile | Vorlage, Dateiname und `OC_ANLAGE` leer, mindestens eine `#`-Spalte gefüllt | hängt eine weitere Meldung an das zuletzt erzeugte Blatt |
+| Trennzeile | Dateiname und `OC_ANLAGE` leer | wird übergangen, dient der Gliederung |
+
+Eine Zeile mit Dateiname, in der nur ein Teil der vier Ebenen gefüllt ist, gilt als fehlerhaft: Sie wird mit Warnung übersprungen.
+
+**Stempel.** Blöcke, deren Name `STEMPEL` enthält, werden nicht über die Anlagenzeile gefüllt, sondern gezielt angesprochen: Der Wert in `OC_ANLAGE` beginnt mit `[1]`, `[2]` … und trifft den Stempel, dessen Attribut `OC_ANLAGE` in der Vorlage mit derselben Kennung beginnt. Die Kennung ist Pflicht, auch bei nur einem Stempel. Findet sich zu einer Kennung kein Stempel, bricht der Lauf an dieser Stelle ab und nennt Liste, Zeile, Zeichnung und gesuchte Kennung; die bis dahin erzeugten Blätter bleiben erhalten.
+
+**Meldungen.** Eine Spalte mit `#` im Namen (z. B. `OC_FCODE_DP_#`) gilt für alle Meldungen eines Blocks: Das `#` wird durch die laufende Nummer ersetzt. Die Anlagenzeile ist Meldung 1, jede folgende Meldungszeile die nächste. Die Meldungsgruppe (`OC_AKS`, `OC_BEZEICHNUNG` und alle `#`-Spalten) wird nur geschrieben, wenn `OC_AKS` in der Anlagenzeile gefüllt ist. Auf demselben Weg lässt sich die Revisionshistorie zeilenweise füllen (`OC_INDEX_AENDERUNG_#`, `OC_DATUM_AENDERUNG_#` …).
+
+**Deckblatt-Schutz.** Enthält die Liste keine Projektzeile, bleibt eine Datei `*Deckblatt_A.dwg` auf der obersten Ebene beim Löschen stehen. Enthält sie mindestens eine Projektzeile, gehört die oberste Ebene der Liste und wird vollständig neu erzeugt.
+
+#### Ausführung
+
+1. Im General-Tab den Projektordner wählen, im openCirt-Tab auf **„Projekt aufbauen"** klicken.
+2. Die Erstellliste auswählen.
+3. **„Vorschau"** oder **„Aufbauen"** wählen.
+   - *Vorschau* ändert nichts. Sie schreibt in das Log, was gelöscht und was erzeugt würde, samt aller Attributwerte und Warnungen.
+   - *Aufbauen* zeigt zuerst die Zahl der zu löschenden Dateien und der zu erzeugenden Zeichnungen. Erst nach der Bestätigung wird gelöscht und aufgebaut.
+4. Am Ende nennt eine Meldung die Zahl der erzeugten Blätter, Fehler und Warnungen.
+
+Sind Zeichnungen aus `05- Projekt Zeichnungen/` noch geöffnet oder liegen dort Sperrdateien (`*.dwl`, `*.dwl2`), bricht der echte Lauf ab, bevor etwas gelöscht wird, und listet die betroffenen Dateien auf.
+
+Das Log liegt im Projektordner: `OC_Log_<Datum>_<Uhrzeit>.txt`, bei der Vorschau mit der Endung `_DRY.txt`. Es empfiehlt sich, vor jedem echten Lauf die Vorschau laufen zu lassen und die Zeilen mit `WARN` zu prüfen.
+
+Die Zeichnungen werden dabei nicht im Editor geöffnet, sondern direkt bearbeitet. Der Bildschirm flackert nicht, und ein Projekt mit 320 Blättern ist in rund einer halben Minute aufgebaut.
 
 ---
 
@@ -177,7 +235,7 @@ Die Blockbibliothek (`03- Blockbibliothek/`) enthält vorgefertigte Symbole mit 
 1. Kopieren Sie `Symbolvorlage_20_DP_V_1_0.dwg` aus `03- Blockbibliothek/00- Vorlagensymbol/`.
 2. Öffnen Sie die Kopie in BricsCAD.
 3. Zeichnen Sie Ihre Grafik.
-4. Die vorhandenen OC-Attribute bleiben erhalten – sie werden automatisch von den openCirt-Skripten befüllt.
+4. Die vorhandenen OC-Attribute bleiben erhalten – sie werden automatisch von openCirt befüllt.
 5. Nicht benötigte Datenpunkte deaktivieren: Attribut `OC_FL_AKTIV_n` auf leer setzen (nur Datenpunkte mit Aktiv-Kennzeichen werden verarbeitet).
 
 **Tipp:** Falls nach dem Bearbeiten eines Blocks die Attribut-Reihenfolge im Eigenschaftenfenster durcheinander ist, können Sie die ATTDEFs im Block-Editor (BEDIT) manuell löschen und in der gewünschten Reihenfolge neu anlegen.
@@ -234,10 +292,7 @@ ERSTELLDATUM;01.04.2026;Erstelldatum
 
 ### 5.2 Ausführung
 
-1. Im BATCHTOOL den Tab **openCirt** öffnen.
-2. Im Tab **General** den Projektordner auswählen (der Ordner, der `05- Projekt Zeichnungen/` enthält).
-3. Auf **„Plankopf-Daten setzen"** klicken.
-4. Alle Zeichnungen werden geöffnet, die CSV-Daten in die Plankopf-Attribute geschrieben, gespeichert und geschlossen.
+Der Schritt ist Teil von **„Projekt erstellen"** (Abschnitt 11): Die Werte der CSV werden in die Plankopf-Attribute aller Zeichnungen geschrieben.
 
 Zusätzlich werden automatisch aus dem Ordnerpfad die Attribute **ASP**, **GEWERK** und **ANLAGE** im Plankopf gesetzt.
 
@@ -252,7 +307,8 @@ Die BMK-Nummerierung vergibt automatisch fortlaufende Betriebsmittelkennzeichen 
 - Jeder Block mit Attribut `OC_AKS` wird erkannt.
 - Das Präfix (z.B. „BSK-") wird beibehalten, die Nummer wird automatisch angehängt: `BSK-01`, `BSK-02`, ...
 - Die Sortierung erfolgt spaltenweise: links → rechts, innerhalb einer Spalte.
-- Zähler werden zwischen Zeichnungen weitergegeben (Datei `bmk_counters.tmp`).
+- Zähler werden zwischen Zeichnungen weitergegeben (Datei `bmk_counters.tmp` im Ordner der Zeichnungen). „Projekt erstellen" löscht die Datei wieder, sobald alle Zeichnungen nummeriert sind. Nach einem Lauf im LISP-Tab bleibt sie liegen; „Projekt bereinigen" entfernt sie.
+
 ### 6.2 Steuerung pro Zeichnung
 
 Das Plankopf-Attribut **BMK_NUMMERIERUNG** steuert den Modus. Ist es nicht vorhanden oder leer, wird ersatzweise **FREITEXT_05** ausgewertet (ältere Plankopf-Vorlagen). Ist `BMK_NUMMERIERUNG` befüllt, wird `FREITEXT_05` nicht mehr angesehen.
@@ -270,8 +326,7 @@ Wenn ein Block ein Attribut `OC_AKS_LOCK` hat und dieses auf „JA", „TRUE" od
 
 ### 6.4 Ausführung
 
-1. Im openCirt-Tab auf **„BMK erstellen"** klicken.
-2. Alle Zeichnungen werden sequenziell verarbeitet.
+Der Schritt ist Teil von **„Projekt erstellen"** (Abschnitt 11) und lässt sich dort über den Haken „BMK-Nummerierung einschliessen" abschalten. Die Zeichnungen werden in der Reihenfolge ihrer Namen verarbeitet.
 
 ---
 
@@ -301,7 +356,7 @@ OC_FCODE_DP        ← Endet mit _DP → wird pro Datenpunkt zu OC_FCODE_DP_1, _
 
 **Ergebnis-Beispiel:** `BSP-ASP01-RLT-TKA-1000-ZUV-01-FR_01`
 
-**Kommentare in der BAS.csv** (ab GenBas.lsp v1.3): Ausgewertet wird nur die erste Spalte einer Zeile, also alles bis zum ersten Semikolon. Was dahinter steht, ist Kommentar. Zeilen, die mit `#` beginnen, werden komplett ignoriert. Die Datei kann damit auch aus Excel/LibreOffice (deutsche Locale, Trennzeichen `;`) gespeichert werden, ohne den Aufbau zu stören.
+**Kommentare in der BAS.csv**: Ausgewertet wird nur die erste Spalte einer Zeile, also alles bis zum ersten Semikolon. Was dahinter steht, ist Kommentar. Zeilen, die mit `#` beginnen, werden komplett ignoriert. Die Datei kann damit auch aus Excel/LibreOffice (deutsche Locale, Trennzeichen `;`) gespeichert werden, ohne den Aufbau zu stören.
 
 ```csv
 # BAS-Aufbau Testprojekt
@@ -328,9 +383,7 @@ Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil d
 
 ### 7.3 Ausführung
 
-1. Im openCirt-Tab auf **„BAS generieren"** klicken.
-2. Die BAS.csv wird eingelesen, alle aktiven Datenpunkte werden verarbeitet.
-3. Ergebnis wird in `OC_BAS_DP_n` geschrieben.
+Der Schritt ist Teil von **„Projekt erstellen"** (Abschnitt 11) und lässt sich dort über den Haken „BAS-Generierung einschliessen" abschalten. Die BAS.csv wird eingelesen, alle aktiven Datenpunkte werden verarbeitet, das Ergebnis steht in `OC_BAS_DP_n`.
 
 ---
 
@@ -340,18 +393,18 @@ Die GA-FL-Erstellung ist der Kern von openCirt. Sie läuft in drei Phasen:
 
 ### 8.1 Phase 1: Datenextraktion
 
-- Alle Quell-DWGs werden geöffnet.
-- Das LISP-Skript `ExtractDP.lsp` liest die Datenpunkte aus (OC_BMK, OC_AKS, OC_REF_DP, OC_BAS_DP, Funktionswerte, ...).
-- Die Daten werden als CSV-Dateien im temp-Verzeichnis gespeichert.
+- Aus allen Quell-DWGs werden die Datenpunkte gelesen (OC_BMK, OC_AKS, OC_REF_DP, OC_BAS_DP, Funktionswerte, ...).
+- Die Daten werden als CSV-Dateien im temp-Verzeichnis gespeichert, je Projekt in einem eigenen Ordner (`OpenCirt_extract/<Projektname>_<Kennung>`). Dort liegen auch die Protokolle `extractdp_log.txt` und `fillgafl_log.txt`.
+- Die Sensorliste greift nicht auf diese Dateien zurück: „Sensorliste erstellen" liest die Zeichnungen des geladenen Projekts selbst neu ein. BMK und BAS stehen in der Liste so, wie der letzte Lauf von „Projekt erstellen" sie in die Zeichnungen geschrieben hat.
 
 ### 8.2 Phase 2: GA-FL-Blätter erzeugen
 
-- Für jede Quell-DWG wird eine GA-FL-DWG erzeugt (Kopie von `OC_VORLAGE_GA_FL.dwg`).
-- Das LISP-Skript `FillGaFl.lsp` füllt die Blätter mit den extrahierten Daten.
+- Für jede Quell-DWG wird eine GA-FL-DWG erzeugt (Kopie von `OC_VORLAGE_GA_FL.dwg`), bei mehr als 25 Datenpunkten mehrere Blätter mit Übertrag.
+- Die Blätter werden mit den extrahierten Daten und den Werten der Referenztabelle gefüllt.
 
 ### 8.2a Phase 3: Summenblätter
 
-- Läuft automatisch, sobald das letzte GA-FL-Blatt gespeichert ist – ohne Zeitlimit, auch bei sehr großen Projekten.
+- Läuft im Anschluss an die GA-FL-Blätter.
 - Die Summenblätter (Gewerk-, ASP-, Los-, Projekt-Summe, Gewerke je Los) werden aus den **fertigen GA-FL-Blättern** aggregiert, nicht aus der Referenztabelle neu berechnet. Eine Handkorrektur in einem GA-FL-Blatt schlägt damit in den Summen durch.
 - Die Referenztabelle wird für die Summen nicht benötigt.
 
@@ -361,12 +414,19 @@ Die Datei `01- Referenzen/GA_FL_VORLAGE.ods` ist die Referenztabelle. Sie defini
 
 Fehlt die Datei oder ist sie leer, bricht „Projekt erstellen" ab, bevor bestehende Blätter gelöscht werden.
 
+**LibreOffice wird gebraucht.** Das Plugin lässt die Tabelle bei jedem Lauf von LibreOffice in `GA_FL_VORLAGE.csv` umwandeln (unter Windows ersatzweise von Excel). Die Tabelle darf dabei in LibreOffice geöffnet sein; gelesen wird der gespeicherte Stand. Scheitert die Umwandlung, erscheint eine Meldung mit dem Grund, und an den Zeichnungen ist nichts geändert.
+
+Unter Linux findet das Plugin LibreOffice aus dem Paket der Distribution, aus den Paketen von libreoffice.org (`/opt/libreoffice…`), als Flatpak (`org.libreoffice.LibreOffice`) und als Snap. Liegt es woanders, nennt die Umgebungsvariable `OPENCIRT_LIBREOFFICE` das Programm, zum Beispiel in `~/.profile`:
+
+```
+export OPENCIRT_LIBREOFFICE="/pfad/zu/soffice"
+```
+
+Ein Flatpak läuft in einer Sandbox und braucht Zugriff auf den Projektordner. LibreOffice von Flathub hat ihn von Haus aus; wurde die Berechtigung für das Dateisystem eingeschränkt (etwa mit Flatseal), muss der Projektordner freigegeben sein.
+
 ### 8.4 Ausführung
 
-1. Im openCirt-Tab auf **„GA-FL erstellen"** klicken.
-2. **Erster Klick:** Phase 1 (Extraktion) läuft.
-3. Warten bis Phase 1 abgeschlossen ist (Meldung im Log).
-4. **Zweiter Klick:** Phase 2 (Erzeugung und Befüllung) läuft automatisch.
+Die drei Phasen sind Teil von **„Projekt erstellen"** (Abschnitt 11) und laufen dort ohne weiteres Zutun nacheinander.
 
 Die erzeugten GA-FL-Dateien werden im jeweiligen Anlage-Ordner gespeichert:
 ```
@@ -377,7 +437,7 @@ Die erzeugten GA-FL-Dateien werden im jeweiligen Anlage-Ordner gespeichert:
 
 ### 8.5 Textbreitenanpassung
 
-Nach der GA-FL-Erstellung kann optional die Textbreitenanpassung ausgeführt werden. Sie korrigiert zu breite Texte in den GA-FL-Blöcken, damit alle Einträge sauber in die Spalten passen.
+Zum Schluss des Gesamtlaufs werden die Textbreiten aller GA-FL- und Summenblätter angepasst: Zu breite Texte werden gestaucht, damit alle Einträge in ihre Spalten passen. Gestreckt wird nie.
 
 ---
 
@@ -399,7 +459,7 @@ Die Deckblätter werden aus der Vorlage `OC_VORLAGE_DIN_A2_V<n>.dwg` mit der hö
 
 ### 9.2 Ausführung
 
-Im openCirt-Tab auf **„Deckblätter erstellen"** klicken.
+Der Schritt ist Teil von **„Projekt erstellen"** (Abschnitt 11).
 
 ---
 
@@ -425,26 +485,30 @@ Nach dem Inhaltsverzeichnis wird automatisch ein Multi-Sheet-PDF im Ordner `06- 
 
 ### 10.3 Ausführung
 
-Im openCirt-Tab auf **„PDF Publish"** klicken. Inhaltsverzeichnis und PDF werden nacheinander erzeugt.
+Im openCirt-Tab auf **„PDF publizieren"** klicken. Inhaltsverzeichnis und PDF werden nacheinander erzeugt. Das Inhaltsverzeichnis entsteht ohne Bildaufbau; für das PDF startet eine zweite BricsCAD-Instanz, die Dateiname und Ordner abfragt und die Blätter plottet.
 
 ---
 
 ## 11. Gesamtprojekt erstellen
 
-Die Funktion „Gesamtprojekt" führt alle Schritte in der korrekten Reihenfolge automatisch aus:
+Die Funktion **„Projekt erstellen"** führt alle Schritte in der korrekten Reihenfolge automatisch aus:
 
-1. Projektstruktur bereinigen (alte GA-FLs, Deckblätter, Inhaltsverzeichnisse löschen)
+1. Projektstruktur bereinigen (alte GA-FLs, Summenblätter, Deckblätter, Inhaltsverzeichnisse löschen)
 2. Plankopf-Daten setzen (aus CSV, einschließlich der Projektblätter auf der obersten Ebene)
-3. BMK-Nummerierung (optional, per Checkbox)
-4. BAS-Generierung (optional, per Checkbox)
-5. GA-FL Phase 1: Datenextraktion
-6. GA-FL Phase 2: Erzeugung und Befüllung
-7. GA-FL Phase 3: Summenblätter aus den fertigen GA-FL-Blättern
-8. Textbreitenanpassung
-9. Deckblätter erstellen
-10. Inhaltsverzeichnis erstellen
+3. Deckblätter erstellen
+4. ASP, Gewerk und Anlage aus dem Ordnerpfad in den Plankopf schreiben
+5. BMK-Nummerierung (optional, per Checkbox)
+6. BAS-Generierung (optional, per Checkbox)
+7. GA-FL Phase 1: Datenextraktion
+8. GA-FL Phase 2: Erzeugung und Befüllung
+9. GA-FL Phase 3: Summenblätter aus den fertigen GA-FL-Blättern
+10. Textbreitenanpassung
 
-Der PDF-Publish muss dann noch separat angestoßen werden.
+Das Inhaltsverzeichnis entsteht zusammen mit dem PDF über **„PDF publizieren"** (Abschnitt 10).
+
+**Seit Version 1.7 läuft der Gesamtlauf ohne Editor.** Das Plugin bearbeitet die Zeichnungsdateien direkt, statt sie nacheinander in BricsCAD zu öffnen. Der Bildschirm flackert nicht, der Lauf dauert bei einem Projekt mit rund 850 Blättern wenige Minuten, und er läuft unter Windows und Linux gleich. Die LISP-Skripte in `02- Skripte/` werden dafür nicht mehr gebraucht; der Ordner muss weiterhin vorhanden sein.
+
+Zeichnungen des Projekts dürfen während des Laufs nicht in BricsCAD geöffnet sein. Ist eine geöffnet, startet der Lauf nicht und nennt sie.
 
 ### Checkboxen im openCirt-Tab
 
@@ -455,7 +519,7 @@ Der PDF-Publish muss dann noch separat angestoßen werden.
 
 ### Ausführung
 
-Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. Der Prozess läuft vollautomatisch – BricsCAD während der Verarbeitung nicht manuell bedienen!
+Im openCirt-Tab auf **„Projekt erstellen"** klicken und die Warnung bestätigen. Der Prozess läuft vollautomatisch; solange er läuft, nimmt das Plugin-Fenster keine Eingaben an. Am Ende nennt eine Meldung Stückzahlen, Fehler und Dauer.
 
 ---
 
@@ -464,26 +528,35 @@ Im openCirt-Tab auf **„Gesamtprojekt"** klicken und die Warnung bestätigen. D
 ### Allgemeine Hinweise
 
 - **Backups:** Vor jedem Batch-Lauf (ACHTUNG NICHT openCirt Erzeugung!!) werden automatisch Backups erstellt (konfigurierbar im General-Tab). Trotzdem empfiehlt sich eine zusätzliche manuelle Sicherung.
-- **Nicht bedienen:** Während eines Batch-Laufs BricsCAD nicht manuell bedienen – die Verarbeitung läuft über SCR-Skripte in der aktuellen Instanz.
-- **Aktuelle Zeichnung:** Die aktuell geöffnete Zeichnung darf nicht in der Batch-Liste enthalten sein.
-- **Neustart vor dem Gesamtlauf:** BricsCAD vor jedem vollständigen Gesamtlauf beenden und neu starten. BricsCAD V26 gibt je geöffnetem Dokument GDI-Objekte nicht wieder frei; ein zweiter Lauf in derselben Sitzung stürzt ab (siehe „Bekannte Probleme" unten).
+- **Sicherungskopien bei „Projekt erstellen":** Jede Zeichnung, die es vor dem Lauf schon gab, bekommt eine Sicherungskopie `*.bak` mit ihrem Stand vor dem Lauf (Quellzeichnungen und Projektblätter; nicht die Blätter, die der Lauf selbst erzeugt). Zum Zurückholen die `.bak` in `.dwg` umbenennen. Ein weiterer Lauf ersetzt die Sicherung durch den dann aktuellen Stand. „Projekt bereinigen" löscht die Sicherungen, „Projekt aufbauen" ebenfalls.
+- **Nicht bedienen:** Während eines Laufs im LISP-Tab BricsCAD nicht manuell bedienen – die Verarbeitung läuft dort über ein Skript in der aktuellen Instanz.
+- **Aktuelle Zeichnung:** Die aktuell geöffnete Zeichnung darf nicht in der Batch-Liste enthalten sein. Für „Projekt erstellen" und „Projekt aufbauen" gilt: keine Zeichnung des Projekts darf geöffnet sein.
+- **Neustart:** Seit Version 1.7 ist vor dem Gesamtlauf kein Neustart von BricsCAD mehr nötig, er öffnet keine Dokumente mehr. Für Läufe im LISP-Tab über sehr viele Zeichnungen gilt der Hinweis weiter (siehe „Bekannte Probleme" unten).
 
 ### Häufige Fehler
 
 | Problem | Ursache | Lösung |
 |---|---|---|
 | „Projektstruktur ungültig" | Ordner fehlen | Alle 4 Ordner müssen existieren: 01- Referenzen, 02- Skripte, 04- Vorlagen, 05- Projekt Zeichnungen |
-| „LISP-Skript nicht gefunden" | Skripte fehlen in 02- Skripte/ | Alle 5 .lsp-Dateien aus dem Sample-Projekt kopieren |
+| „Projekt erstellen" startet nicht: „Zeichnungen … sind in BricsCAD geöffnet" | Eine Zeichnung des Projekts ist im Editor geöffnet | Zeichnung schließen, Lauf neu starten |
 | „BAS.csv nicht gefunden" | BAS.csv fehlt oder falsch benannt | Datei muss exakt `BAS.csv` heißen und in `01- Referenzen/` liegen |
 | „Referenz fehlt" / „GA-FL-Referenz nicht gefunden" | ODS-Datei fehlt oder leer | `GA_FL_VORLAGE.ods` in `01- Referenzen/` ablegen; der Lauf startet erst dann |
+| „Referenz umwandeln": LibreOffice wurde nicht gefunden | LibreOffice fehlt oder liegt an einem Ort, an dem das Plugin nicht sucht | LibreOffice installieren oder das Programm in `OPENCIRT_LIBREOFFICE` nennen (siehe 8.3). An den Zeichnungen ist nichts geändert |
+| „Referenz umwandeln": LibreOffice hat keine CSV-Datei geschrieben | LibreOffice kann die Tabelle nicht lesen oder nicht in den Ordner schreiben; bei einem Flatpak fehlt meist der Zugriff auf den Projektordner | Die Meldung zeigt die Ausgabe von LibreOffice. Zugriff auf den Projektordner freigeben, Lauf neu starten |
 | Keine Datenpunkte erkannt | OC_FL_AKTIV_n nicht gesetzt | Mindestens ein Datenpunkt muss aktiv sein (OC_FL_AKTIV_n = „ja") |
-| BMK-Nummern beginnen nicht bei 01 | BMK_NUMMERIERUNG (bzw. FREITEXT_05) = FORTSETZEN | Auf „NEUSTARTEN" setzen oder bmk_counters.tmp löschen |
+| BMK-Nummern beginnen nicht bei 01 | BMK_NUMMERIERUNG (bzw. FREITEXT_05) = FORTSETZEN | Auf „NEUSTARTEN" setzen. Nach einem Lauf im LISP-Tab zusätzlich `bmk_counters.tmp` löschen („Projekt erstellen" tut das selbst) |
 | Deckblatt zeigt „Projekt" statt Projektname | PR1 leer | In plankopfdaten.csv den Wert für PR1 eintragen |
-| BricsCAD stürzt beim zweiten Gesamtlauf in derselben Sitzung ab („Fehler beim Ausführen von _open") | GDI-Objekt-Leck in BricsCAD V26 – Windows-Limit von 10.000 GDI-Objekten je Prozess überschritten | BricsCAD vor jedem Gesamtlauf neu starten; Details und Registry-Puffer in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) |
+| BricsCAD stürzt nach sehr vielen geöffneten Zeichnungen ab („Fehler beim Ausführen von _open") | GDI-Objekt-Leck in BricsCAD V26 – Windows-Limit von 10.000 GDI-Objekten je Prozess überschritten. Betrifft seit 1.7 nur noch den LISP-Tab | BricsCAD vor einem großen Lauf neu starten; Details und Registry-Puffer in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) |
+| „Projekt aufbauen" bricht ab: „Zeichnungen sind offen" | Eine Zeichnung aus `05- Projekt Zeichnungen` ist geöffnet, oder dort liegt eine Sperrdatei `*.dwl`/`*.dwl2` aus einem Absturz | Zeichnungen schließen, verwaiste Sperrdateien löschen („Projekt bereinigen"), Aufbau neu starten |
+| „Projekt aufbauen" bricht ab: „Stempel nicht gefunden" | Die Kennung `[n]` aus `OC_ANLAGE` kommt in keinem Stempel der Vorlage vor | Erstellliste und Vorlage vergleichen; die Meldung nennt Zeile, Zeichnung und Kennung |
+| Linux: Skript im LISP-Tab bricht ab der dritten Zeichnung ab | Fehler der LISP-Umgebung in BricsCAD V26 für Linux | Keine Abhilfe im Plugin, siehe [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) |
 
 ### Bekannte Probleme
 
-Probleme, deren Ursache nicht im Plugin, sondern in BricsCAD oder Windows liegt, sind in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) im Repository beschrieben – derzeit das GDI-Objekt-Leck von BricsCAD V26: Beobachtung im Task-Manager, die Regel „BricsCAD vor jedem Gesamtlauf neu starten" und das optionale Anheben des Windows-Limits über den Registry-Wert `GDIProcessHandleQuota`.
+Probleme, deren Ursache nicht im Plugin, sondern in BricsCAD oder im Betriebssystem liegt, sind in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) im Repository beschrieben:
+
+- **Windows:** das GDI-Objekt-Leck von BricsCAD V26. Seit Version 1.7 betrifft es nur noch Läufe, die Zeichnungen im Editor öffnen, also den LISP-Tab mit sehr vielen Dateien.
+- **Linux:** zwei Fehler der LISP-Umgebung von BricsCAD V26. Sie treffen LISP, das über viele Zeichnungen hintereinander läuft – seit Version 1.7 nur noch den LISP-Tab mit rechenintensiven Skripten. Alle Funktionen des openCirt-Tabs und die Tabs Text, Attributes und Layers kommen ohne LISP aus.
 
 ### Attribut-Reihenfolge korrigieren
 

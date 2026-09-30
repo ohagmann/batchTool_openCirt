@@ -54,8 +54,6 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    /// openCirt-Tab fuer Plugin-Befehle, die aus einem laufenden Skript
-    /// kommen (OC_PHASE3_PREPARE)
     OpenCirtTab* openCirtTab() const { return m_openCirtTab; }
 
 signals:

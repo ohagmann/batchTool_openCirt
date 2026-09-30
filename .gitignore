@@ -81,3 +81,5 @@ Desktop.ini
 *.backup
 *.old
 *.orig
+
+build_linux/

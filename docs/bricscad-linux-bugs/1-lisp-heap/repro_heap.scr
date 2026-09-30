@@ -1,0 +1,26 @@
+(progn (setvar "FILEDIA" 0)(vl-file-delete (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt"))(princ))
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 1: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 2: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 3: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 4: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 5: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+_.QNEW
+(progn (setq r (vl-catch-all-apply (quote (lambda (/ s) (repeat 5 (setq s "") (repeat 3000 (setq s (strcat s "x")))) (strcat "ok, string length " (itoa (strlen s)))))))(setq m (strcat "document 6: " (if (vl-catch-all-error-p r) (vl-catch-all-error-message r) r)))(setq f (open (strcat (getvar "TEMPPREFIX") "repro_heap_result.txt") "a"))(write-line m f)(close f)(princ (strcat "\n" m))(princ))
+_.CLOSE
+_N
+(progn (setvar "FILEDIA" 1)(princ (strcat "\nResult file: " (getvar "TEMPPREFIX") "repro_heap_result.txt"))(princ))

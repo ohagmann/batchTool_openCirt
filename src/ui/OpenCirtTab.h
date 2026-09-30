@@ -1,18 +1,17 @@
 ﻿/**
  * @file OpenCirtTab.h
  * @brief openCirt Tab - GA-Automation for BricsCAD BatchProcessing Plugin
- * @version 2.0.0
+ * @version 3.0.0
  * 
- * Implements the openCirt tab with 5 functions:
- * 1. BMK-Nummerierung generieren
- * 2. BAS-Generierung
- * 3. GA-Funktionslisten generieren
- * 4. Textbreitenanpassung
- * 5. Gesamtprojekt generieren
+ * Der Tab steuert den Ablauf: Projekt aufbauen, Projekt erstellen
+ * (Plankopf, Deckblaetter, BMK, BAS, Extraktion, GA-FL, Summen, Textbreiten),
+ * Projekt bereinigen, PDF publizieren, IO-Liste, Sensorliste.
  * 
- * Architecture: C++ Orchestrator generates SCR files, LISP scripts
- * handle in-drawing operations. Executed via _.SCRIPT in current
- * BricsCAD instance (same as LISP tab).
+ * Architektur: Die Zeichnungen werden als Side-Database bearbeitet
+ * (core/OpenCirtEngine, core/ProjectBuilder) - ohne Editor, ohne LISP, unter
+ * Windows und Linux gleich. Bis Version 1.6 erzeugte der Tab dafuer Skripte
+ * mit LISP, die BricsCAD im Editor ausfuehrte. Nur der PDF-Publish braucht
+ * weiterhin BricsCAD selbst und laeuft in einer eigenen Batch-Instanz.
  * 
  * Reference: OpenCirt_Tab_TechnicalSpec_v1.1
  */
@@ -24,8 +23,11 @@
 #include <QString>
 #include <QStringList>
 #include <QMap>
+#include <QDateTime>
 #include <QVector>
 #include <QJsonObject>
+#include <QProcessEnvironment>
+#include <functional>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -39,21 +41,7 @@ QT_END_NAMESPACE
 
 namespace BatchProcessing {
 
-// ============================================================================
-// Phase State
-// ============================================================================
-
-/**
- * @brief GA-FL generation phase tracking
- * 
- * Since _.SCRIPT runs asynchronously, Phase 2 (creation/fill) can only
- * start after Phase 1 (extraction) has completed. The user must click
- * the GA-FL button twice, or use the Full Project flow.
- */
-enum class GaFlPhase {
-    Idle,           ///< No GA-FL operation in progress
-    Phase1Done      ///< Extraction complete, ready for Phase 2
-};
+class OcDrawing;
 
 // ============================================================================
 // Data Structures
@@ -152,13 +140,6 @@ public:
     /// Check if openCirt functions are enabled
     bool isEnabled() const;
 
-    /// Phase 3 des Gesamtlaufs. Wird vom Plugin-Befehl OC_PHASE3_PREPARE aus
-    /// dem Phase-2-Skript aufgerufen, sobald das letzte GA-FL-Blatt gespeichert
-    /// ist: liest die fertigen Blaetter, schreibt die Summen-CSVs und legt
-    /// das Phase-3-Skript (Summen, Textbreiten, Cleanup) bereit, das
-    /// onPhase3StartTimer startet, sobald das Phase-2-Skript beendet ist.
-    void preparePhase3();
-
 signals:
     void logMessage(const QString& message, const QString& type);
 
@@ -179,29 +160,76 @@ private slots:
     void onPublishPdf();
     void onSensorListeGenerate();
     void onDatenpunktExport();
-    
-    /// Timer callback: poll for Phase 1 completion marker
-    void onPhase1PollTimer();
-
-    /// Timer callback: Phase 3 starten, sobald das Phase-2-Skript beendet ist
-    void onPhase3StartTimer();
 
 private:
     void setupUi();
     void updateButtonStates();
-    
+
+    // ================================================================
+    // Laeufe ohne Editor
+    // ================================================================
+
+    /// Zaehler eines Laufs
+    struct RunCounts {
+        int errors = 0;         ///< Zeichnungen, die sich nicht lesen oder speichern liessen
+        int deckblaetter = 0;
+        int bmk = 0;            ///< vergebene Betriebsmittelkennzeichen
+        int bas = 0;            ///< geschriebene BAS-Strings
+        int datenpunkte = 0;
+        int gaFl = 0;           ///< GA-FL-Blaetter
+        int summen = 0;         ///< Summenblaetter
+        int textbreiten = 0;    ///< angepasste Texte
+    };
+
+    /// Summenblatt, das der Gesamtlauf erzeugt
+    struct SummaryJob {
+        QString target;         ///< Zieldatei
+        QString csvPath;        ///< CSV mit den Zeilen der Summenebene
+        int sheetNum = 1;
+        int startRow = 0;
+        int dpCount = 0;
+    };
+
+    /// false, wenn Zeichnungen des Projekts im Editor geoeffnet sind; zeigt
+    /// dann die Liste
+    bool checkNoOpenDrawings(const QString& title);
+
+    /// Lauf beginnen: Schaltflaechen sperren, Fortschritt zeigen
+    void beginRun(QPushButton* button, const QString& busyText);
+    /// Neuer Abschnitt des Laufs mit eigener Zaehlung
+    void beginPhase(const QString& label, int total);
+    /// Eine Zeichnung des Abschnitts ist fertig
+    void stepDone(const QString& fileName);
+    void endRun();
+
+    /// Zeichnung lesen, bearbeiten, speichern. Fehler stehen im Protokoll
+    /// und in counts.errors.
+    bool processDrawing(const QString& path, RunCounts& counts,
+                        const std::function<void(OcDrawing&)>& work,
+                        bool backup = true);
+
+    /// Wie processDrawing() fuer ein Blatt, das der Lauf eben aus einer
+    /// Vorlage kopiert hat: ohne Sicherungskopie
+    bool processNewDrawing(const QString& path, RunCounts& counts,
+                           const std::function<void(OcDrawing&)>& work);
+
+    /// Zaehlerdateien der BMK-Nummerierung (bmk_counters.tmp) aus dem
+    /// Zeichnungsordner entfernen. Rueckgabe: Anzahl.
+    int removeBmkCounters();
+
+    /// Schritte des Gesamtlaufs. false bei Abbruch.
+    bool runGesamtlauf(const QStringList& dwgFiles, RunCounts& counts);
+
+    /// REF_DP der Datenpunkte gegen die Referenz pruefen; bei fehlenden
+    /// Referenzen fragen, ob der Lauf weitergehen soll
+    bool confirmMissingReferences(const QVector<SourceDrawingInfo>& drawings);
+
     // ================================================================
     // Core Orchestration Methods
     // ================================================================
     
     /// Read plankopfdaten.csv from Referenzen folder (dynamic key-value pairs)
     QMap<QString, QString> readPlankopfCsv();
-    
-    /// Generate SCR to write plankopfdaten.csv attributes into all project DWGs
-    QString generatePlankopfCsvScr(const QStringList& dwgFiles);
-    
-    /// Generate LISP snippet to set arbitrary attributes in all Plankopf blocks
-    QString generateSetPlankopfSnippet(const QMap<QString, QString>& attrs);
     
     /// Validate project structure (check required folders/files)
     bool validateProjectStructure(QStringList& errors);
@@ -223,35 +251,13 @@ private:
     
     /// Find LibreOffice executable
     QString findLibreOffice();
-    
+
+    /// Umgebung fuer fremde Programme: ohne das Programmverzeichnis von
+    /// BricsCAD im Bibliothekspfad
+    static QProcessEnvironment externalToolEnvironment();
+
     /// Find Microsoft Excel executable
     QString findExcel();
-    
-    // ================================================================
-    // Phase 1: BMK Nummerierung
-    // ================================================================
-    
-    /// Generate SCR for BMK numbering across all project DWGs
-    QString generateBmkScr(const QStringList& dwgFiles);
-    
-    // ================================================================
-    // Phase 2: BAS Generation
-    // ================================================================
-    
-    /// Parse BAS.csv definition file
-    struct BasSegment {
-        bool isStatic;          ///< true = literal string, false = attribute name
-        QString value;          ///< The static text or attribute name
-        bool isDpSuffix;        ///< Attribute ends with _DP (needs _n appended)
-    };
-    QVector<BasSegment> parseBasCsv(const QString& csvPath);
-    
-    /// Generate SCR for BAS generation
-    QString generateBasScr(const QStringList& dwgFiles);
-    
-    // ================================================================
-    // Phase 3: GA-FL Generation (Two-Phase)
-    // ================================================================
     
     // ================================================================
     // Phase 0: Deckblatt Generation
@@ -265,37 +271,54 @@ private:
     
     /// Cleanup temp/backup files from project (*.bak, *.dwl, etc.)
     void onProjektBereinigen();
-    
-    /// Generate SCR for Deckblatt creation
-    QString generateDeckblattScr();
 
-    /// Generate LISP snippet to set ASP/GEWERK/ANLAGE in all blocks carrying
-    /// those tags. Empty strings clear the respective attribute.
-    QString generateSetHierarchieSnippet(const QString& aspValue,
-                                         const QString& gewerkValue,
-                                         const QString& anlageValue);
+    /// Quellzeichnungen aus der Erstellliste (CSV) aufbauen: Vorlagen
+    /// kopieren, einsortieren, Attribute setzen. Wahlweise nur als Vorschau.
+    /// Ersetzt das LISP-Skript OC_PROJECT_BUILD (siehe core/ProjectBuilder).
+    void onProjektAufbauen();
+    
+    /// Je Ordner unter dem Zeichnungsordner ein Deckblatt erzeugen
+    void createDeckblaetter(RunCounts& counts);
 
     /// Derive ASP/GEWERK/ANLAGE from a folder below the drawings root
     void deriveHierarchieFromFolder(const QString& folderPath,
                                     QString& asp, QString& gewerk, QString& anlage);
 
-    /// Ensure m_plankopfCsvData is populated (reads plankopfdaten.csv once)
+    /// plankopfdaten.csv des aktuellen Projekts lesen
+    void loadPlankopfCsv();
+
+    /// m_plankopfCsvData auf den Stand der plankopfdaten.csv des aktuellen
+    /// Projekts bringen; liest neu, wenn Projekt oder Datei sich geaendert haben
     void ensurePlankopfCsvLoaded();
 
-    /// Generate SCR to write ASP from folder hierarchy into Plankopf of each source DWG
-    QString generatePlankopfAspScr(const QStringList& dwgFiles);
-    
     /// Extract display name from folder name (strip leading digits+space)
     static QString folderDisplayName(const QString& folderName);
     
     /// Phase 0: Cleanup - delete existing GA-FL and summary sheets
     bool cleanupGaFl();
     
-    /// Phase 1: Generate extraction SCR (extract DPs from source DWGs)
-    QString generateExtractionScr(const QStringList& dwgFiles);
-    
     /// Intermediate: Read extracted CSVs and plan GA-FL generation
     QVector<SourceDrawingInfo> readExtractedData(const QStringList& dwgFiles);
+
+    /// Ordner der Extraktionsdaten des geladenen Projekts:
+    /// <Temp>/OpenCirt_extract/<Projektname>_<Kennung aus dem Pfad>[_<Zweck>]
+    /// Der Gesamtlauf (Zweck leer) und die Listen haben je ihren eigenen,
+    /// damit eine Liste die Protokolle des Gesamtlaufs nicht wegraeumt.
+    QString projectExtractDir(const QString& purpose) const;
+
+    /// Ordner der Extraktionsdaten fuer den laufenden Lauf leeren und neu
+    /// anlegen. false: alte Daten liessen sich nicht entfernen - dann darf
+    /// nichts daraus gelesen werden.
+    bool resetExtractDir(const QString& purpose = QString());
+
+    /// Der Ordner wurde vom laufenden Lauf fuer das geladene Projekt gefuellt
+    bool extractDirUsable() const;
+
+    /// Datenpunkte aller Quellzeichnungen neu extrahieren, ohne die
+    /// Zeichnungen zu aendern. unreadable: Zeichnungen, die sich nicht lesen
+    /// liessen. false: der Ordner liess sich nicht vorbereiten.
+    bool extractDrawings(const QStringList& dwgFiles, const QString& purpose,
+                         QStringList& unreadable);
     
     /// Read ODS reference data (column mapping)
     /// Returns map: DP-Name -> row data (all columns from CSV)
@@ -307,11 +330,19 @@ private:
     /// Calculate number of GA-FL sheets needed for N datapoints
     static int calculateSheetCount(int dpCount);
     
-    /// Phase 2: Generate creation/fill SCR for GA-FL sheets
-    QString generateGaFlCreationScr(const QVector<SourceDrawingInfo>& drawings);
-    
-    /// Generate summary sheets SCR
-    QString generateSummarySheetScr(const QVector<SourceDrawingInfo>& drawings);
+    /// Phase 2: GA-FL-Blaetter erzeugen und befuellen. extracted traegt je
+    /// Quellzeichnung die Zeilen ihrer extrahierten CSV.
+    void createGaFlSheets(const QVector<SourceDrawingInfo>& drawings,
+                          const QMap<QString, QStringList>& extracted,
+                          const QString& refCsvPath, RunCounts& counts);
+
+    /// Phase 3: Summen-CSVs schreiben und die Summenblaetter planen
+    /// (m_summaryJobs, m_plannedSummarySheets)
+    void planSummarySheets(const QVector<SourceDrawingInfo>& drawings);
+
+    /// Phase 3: GA-FL-Blaetter lesen, Summenblaetter erzeugen, Textbreiten
+    /// aller GA-FL- und Summenblaetter anpassen
+    void createSummen(RunCounts& counts);
 
     /// Phase 3: die fertigen GA-FL-Blaetter als Datenquelle fuer die Summen.
     /// Ein Eintrag je Blatt; Funktionswerte je Datenpunkt aus den Blattzellen
@@ -321,16 +352,6 @@ private:
 
     /// ASP/Gewerk/Anlage aus dem Ablageort einer Zeichnung ableiten
     void applyFolderHierarchie(SourceDrawingInfo& info, const QString& dwgPath);
-
-    /// Pfad des Phase-3-Skripts im Extraktions-Tempordner
-    QString phase3ScrPath() const;
-
-    // ================================================================
-    // Phase 4: Text Width Adjustment
-    // ================================================================
-
-    /// Generate SCR that runs the text width adjustment over the given DWGs
-    QString generateTextwidthScrFor(const QStringList& dwgPaths);
 
     // ================================================================
     // Phase 5: Inhaltsverzeichnis + PDF Publish
@@ -361,11 +382,9 @@ private:
     /// Build TOC entries from ordered DWG list
     QVector<TocEntry> buildTocEntries(const QStringList& orderedDwgs, int tocPageCount);
     
-    /// Generate SCR for Inhaltsverzeichnis DWG creation
-    QString generateInhaltScr(const QVector<TocEntry>& entries, int tocPageCount);
-    
-    /// Timer callback: poll for Inhalt SCR completion, then publish
-    void onPublishPollTimer();
+    /// Seiten des Inhaltsverzeichnisses erzeugen. Rueckgabe: Anzahl der
+    /// Seiten, -1 wenn die Vorlage fehlt.
+    int createInhaltPages(const QVector<TocEntry>& entries, int tocPageCount);
     
     /// Timer callback: poll for PDF publish completion marker
     void onPdfDonePollTimer();
@@ -374,21 +393,6 @@ private:
     void launchPublish(const QStringList& orderedDwgs);
     
 
-    // ================================================================
-    // SCR Execution
-    // ================================================================
-    
-    /// Execute a generated SCR file via _.SCRIPT in current BricsCAD instance
-    bool executeScrFile(const QString& scrContent, const QString& description);
-    
-    /// Write SCR content to temp file
-    QString writeScrToTempFile(const QString& content, const QString& name);
-    
-    /// Platform-specific LISP for save (VLA on Windows, command on Linux)
-    QString lispSave();
-    /// Platform-specific LISP for close (VLA on Windows, command on Linux)
-    QString lispClose();
-    
     // ================================================================
     // Helpers
     // ================================================================
@@ -419,6 +423,7 @@ private:
     QCheckBox* m_enableCheck;
     QLabel* m_statusLabel;
     
+    QPushButton* m_btnProjektAufbau;
     QPushButton* m_btnFullProject;
     QPushButton* m_btnPublish;
     QPushButton* m_btnSensorliste;
@@ -436,35 +441,36 @@ private:
     QString m_projectRoot;
     OpenCirtConfig m_config;
     
-    // Plankopf CSV data (cached during project generation)
+    // Plankopf CSV data, samt Datei und Stand, aus denen sie stammen
     QMap<QString, QString> m_plankopfCsvData;
+    QString m_plankopfCsvPath;
+    QDateTime m_plankopfCsvStamp;
+    qint64 m_plankopfCsvSize = -1;
     
-    // GA-FL phase tracking
-    GaFlPhase m_gaFlPhase = GaFlPhase::Idle;
-    QString m_extractTempDir;   ///< Temp dir for extracted CSVs
+    /// Ordner der Extraktionsdaten. Er gehoert zu einem Projekt und einem
+    /// Zweck und wird nur in dem Lauf gelesen, der ihn gefuellt hat (siehe
+    /// resetExtractDir()).
+    QString m_extractTempDir;
+    QString m_extractPurpose;      ///< leer = Gesamtlauf, sonst z.B. "Sensorliste"
+    bool m_extractFresh = false;   ///< vom laufenden Lauf geleert und gefuellt
+    QString m_odsProblem;          ///< warum convertOdsToCSV gescheitert ist (fuer die Meldung)
 
-    /// Full paths of all summary sheets planned by generateSummarySheetScr().
-    /// Needed because the text width adjustment runs in the same SCR
-    /// (phase3.scr), i.e. before those files exist on disk.
+    /// Summenblaetter, die planSummarySheets() vorgesehen hat
+    QVector<SummaryJob> m_summaryJobs;
+
+    /// Pfade dieser Summenblaetter, fuer die Textbreitenanpassung
     QStringList m_plannedSummarySheets;
+
+    // Laufender Lauf: Sperre der Schaltflaechen und Fortschritt
+    bool m_running = false;
+    QPushButton* m_runButton = nullptr;     ///< Schaltflaeche, die den Lauf gestartet hat
+    QString m_runButtonText;                ///< ihr Text ausserhalb des Laufs
+    QString m_phaseLabel;
+    int m_phaseTotal = 0;
+    int m_phaseDone = 0;
 
     /// Last filter used in the datapoint export dialog (semicolon separated)
     QString m_dpExportFilter = "HW";
-    
-    // Phase 1 completion polling
-    QTimer* m_phase1Timer = nullptr;    ///< Polls for marker file
-    QString m_phase1MarkerPath;         ///< Path to completion marker
-    bool m_fullProjectMode = false;     ///< True when running Gesamtprojekt
-
-    // Phase 3: Start nach Ende des Phase-2-Skripts
-    QTimer* m_phase3StartTimer = nullptr;   ///< Prueft CMDACTIVE, startet Phase 3
-    QString m_phase3Scr;                    ///< Vorbereitetes Phase-3-Skript
-    bool m_phase3WaitLogged = false;        ///< "warte auf Skriptende" nur einmal loggen
-    
-    // Publish: Inhalt generation -> PDF publish polling
-    QTimer* m_publishTimer = nullptr;   ///< Polls for Inhalt SCR completion
-    QString m_publishMarkerPath;        ///< Path to Inhalt completion marker
-    QStringList m_pendingPublishDwgs;   ///< DWGs to publish after Inhalt is ready
     
     // PDF publish completion polling (via /b batch instance + marker file)
     QTimer* m_pdfDoneTimer = nullptr;   ///< Polls for publish-done marker

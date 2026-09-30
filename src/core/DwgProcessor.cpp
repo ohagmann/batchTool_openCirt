@@ -42,6 +42,7 @@ static bool s_bEvaluateLispResolved = false;
 static pfnAcedEvaluateLisp getAcedEvaluateLisp() {
     if (!s_bEvaluateLispResolved) {
         s_bEvaluateLispResolved = true;
+#ifdef _WIN32
         // Try to find acedEvaluateLisp in brx26.dll at runtime
         HMODULE hBrx = GetModuleHandleW(L"brx26.dll");
         if (!hBrx) hBrx = GetModuleHandleW(L"brx25.dll");
@@ -49,6 +50,17 @@ static pfnAcedEvaluateLisp getAcedEvaluateLisp() {
         if (hBrx) {
             s_pAcedEvaluateLisp = (pfnAcedEvaluateLisp)GetProcAddress(hBrx, "acedEvaluateLisp");
         }
+#else
+        // Linux: same lookup by plain name in the already loaded libbrx26.so.
+        // RTLD_NOLOAD only returns a handle if BricsCAD has the library loaded.
+        void* hBrx = dlopen("libbrx26.so", RTLD_LAZY | RTLD_NOLOAD);
+        if (!hBrx) hBrx = dlopen("libbrx25.so", RTLD_LAZY | RTLD_NOLOAD);
+        if (!hBrx) hBrx = dlopen("libbrx24.so", RTLD_LAZY | RTLD_NOLOAD);
+        if (hBrx) {
+            s_pAcedEvaluateLisp = (pfnAcedEvaluateLisp)dlsym(hBrx, "acedEvaluateLisp");
+            dlclose(hBrx);
+        }
+#endif
     }
     return s_pAcedEvaluateLisp;
 }

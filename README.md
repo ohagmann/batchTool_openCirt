@@ -1,16 +1,16 @@
 # batchTool / openCirt – BricsCAD Batch Processing & GA-Planungssoftware Plugin
 
-Ein BRX-Plugin (C++/Qt6) für die automatisierte Massenverarbeitung von DWG-Dateien und zur Erstellung von Planungsunterlagen für die Gebäudeautomation (nach VDI3814) in BricsCAD V26. Statt Zeichnungen einzeln zu öffnen und manuell zu bearbeiten, können wiederkehrende Aufgaben über beliebig viele Dateien in einem Durchgang erledigt werden. Dazu können Texte, Attributwerte, Layer-Operationen und Lisp-Skripte genutzt werden. Im openCirt Tab können außerdem alle Aufgaben für die Erstellung von GA-Automationsschemata inkl. GA-FL erledigt werden. openCirt ist DIE freie GA-Planungssoftware für alle - kostenlos, hocheffizient und einfach zu bedienen.
+Ein BRX-Plugin (C++/Qt6) für die automatisierte Massenverarbeitung von DWG-Dateien und zur Erstellung von Planungsunterlagen für die Gebäudeautomation (nach VDI3814) in BricsCAD V26 unter Windows und Linux. Statt Zeichnungen einzeln zu öffnen und manuell zu bearbeiten, können wiederkehrende Aufgaben über beliebig viele Dateien in einem Durchgang erledigt werden. Dazu können Texte, Attributwerte, Layer-Operationen und Lisp-Skripte genutzt werden. Im openCirt Tab können außerdem alle Aufgaben für die Erstellung von GA-Automationsschemata inkl. GA-FL erledigt werden. openCirt ist DIE freie GA-Planungssoftware für alle - kostenlos, hocheffizient und einfach zu bedienen.
 
 > ## ⚠️ Hinweis: Bildschirmflackern (Photosensitivität)
 >
-> Bei Batch-Läufen (LISP-Verarbeitung) und beim PDF-Publish werden Zeichnungen in schneller Folge im sichtbaren BricsCAD-Fenster geöffnet, verarbeitet, gespeichert und geschlossen. Dabei entsteht ein **rasches, großflächiges Flackern** des Bildschirms.
+> Bei Läufen im LISP-Tab und beim PDF-Publish werden Zeichnungen in schneller Folge im sichtbaren BricsCAD-Fenster geöffnet, verarbeitet, gespeichert und geschlossen. Dabei entsteht ein **rasches, großflächiges Flackern** des Bildschirms.
 >
 > Solche schnellen Hell-Dunkel-Wechsel können bei Menschen mit **photosensitiver Epilepsie** Anfälle auslösen und auch bei nicht betroffenen Personen Unwohlsein, Kopfschmerzen oder Augenbelastung verursachen. Viele Betroffene wissen nichts von ihrer Empfindlichkeit, bis ein Anfall auftritt.
 >
 > **Empfehlung:** Während eines laufenden Batch- oder Publish-Vorgangs nicht dauerhaft auf den Bildschirm schauen, das Fenster minimieren oder den Arbeitsplatz verlassen. Personen mit bekannter Photosensitivität sollten den Lauf nicht beobachten.
 >
-> Technischer Hintergrund: BricsCAD bietet für diese Verarbeitung keinen vollständig unsichtbaren (headless) Modus; das Skript läuft im Vordergrund-Editor, weshalb der Bildaufbau sichtbar ist. Reine Text-, Attribut- und Layer-Operationen laufen dagegen datenbankseitig ohne Bildaufbau und flackern nicht.
+> Technischer Hintergrund: BricsCAD bietet für diese Verarbeitung keinen vollständig unsichtbaren (headless) Modus; das Skript läuft im Vordergrund-Editor, weshalb der Bildaufbau sichtbar ist. Text-, Attribut- und Layer-Operationen sowie – seit Version 1.7 – alle Schritte von „Projekt aufbauen" und „Projekt erstellen" laufen dagegen datenbankseitig ohne Bildaufbau und flackern nicht.
 
 ## Features
 
@@ -21,15 +21,25 @@ Das Plugin bietet sechs Funktionsbereiche als Tabs im Hauptfenster:
 **Attributes** – Blockattribute gezielt ändern (nach Block, Tag, Sichtbarkeit filterbar)
 **Layers** – Layer löschen, umbenennen, einfrieren, Farbe/Linientyp/Transparenz ändern
 **LISP** – Eigene LISP-Skripte automatisiert auf alle DWG-Dateien anwenden
-**openCirt** – GA-Planungsautomatisierung (Plankopf, BMK, BAS, GA-FL, Summenblätter, Deckblätter, Inhaltsverzeichnis, Sensorliste, Datenpunkt-/IO-Export, PDF-Publish)
+**openCirt** – GA-Planungsautomatisierung (Projektaufbau aus der Erstellliste, Plankopf, BMK, BAS, GA-FL, Summenblätter, Deckblätter, Inhaltsverzeichnis, Sensorliste, Datenpunkt-/IO-Export, PDF-Publish)
 
 ## Voraussetzungen
+
+Windows:
 
 - **BricsCAD V26** (Windows, 64-Bit)
 - **BRX SDK V26** (separat von Bricsys zu beziehen, siehe unten)
 - **Qt 6.8+** (MSVC 2022, 64-Bit)
 - **CMake 3.20+**
 - **Visual Studio 2022** (MSVC v143 Toolset)
+
+Linux:
+
+- **BricsCAD V26** (64-Bit, getestet mit V26.2.07 unter Ubuntu)
+- **BRX SDK V26** – dasselbe SDK wie unter Windows, die Header sind plattformneutral
+- **Qt 6.8.2** (gcc_64) – genau die Version, die BricsCAD mitbringt. Das Plugin läuft im BricsCAD-Prozess und benutzt dessen Qt-Bibliotheken; das SDK wird nur zum Bauen gebraucht
+- **CMake 3.20+**, **Ninja**, **g++** mit C++17
+- OpenGL-Entwicklerdateien (`libgl-dev` oder gleichwertig), die Qt beim Konfigurieren verlangt
 
 ### BRX SDK
 
@@ -53,12 +63,31 @@ CLEAN_BUILD.bat
 ```
 
 Das Skript führt folgende Schritte aus:
-1. Beendet laufende BricsCAD-Instanzen – solange BricsCAD läuft, hält es `batchtool.brx` geöffnet und der Build scheitert am Linker. Zuerst wird BricsCAD regulär zum Beenden aufgefordert (Speichern-Rückfragen erscheinen wie gewohnt), erst nach 30 Sekunden folgt eine Rückfrage zum harten Beenden. `CLEAN_BUILD.bat /force` überspringt diese Rückfrage
+1. Beendet laufende BricsCAD-Instanzen – solange BricsCAD läuft, hält es das geladene Plugin geöffnet und der Build scheitert am Linker. Zuerst wird BricsCAD regulär zum Beenden aufgefordert (Speichern-Rückfragen erscheinen wie gewohnt), erst nach 30 Sekunden folgt eine Rückfrage zum harten Beenden. `CLEAN_BUILD.bat /force` überspringt diese Rückfrage
 2. Löscht alte Build-Artefakte
 3. CMake-Konfiguration (Visual Studio 17 2022, x64, Release)
 4. MSBuild-Kompilierung
 
-Das fertige Plugin liegt anschließend unter `build_windows\Release\batchtool.brx`.
+Das fertige Plugin liegt anschließend unter `build_windows\Release\batchtool-<Version>.brx` (die Version stammt aus dem obersten Abschnitt von `CHANGELOG.md`, z.B. `batchtool-1.7.1.brx`) und wird zusätzlich nach `sample_project/00- BricsCAD Plugin/00- Windows Version/` gelegt; ältere Stände dort werden entfernt.
+
+### Linux
+
+```sh
+./CLEAN_BUILD.sh
+```
+
+Das Skript löscht `build_linux`, konfiguriert mit CMake (Generator Ninja, Release) und baut. Das fertige Plugin liegt unter `build_linux/Release/batchtool-<Version>.lrx` (z.B. `batchtool-1.7.1.lrx`) und wird zusätzlich nach `sample_project/00- BricsCAD Plugin/01- Linux Version/` gelegt; ältere Stände dort werden entfernt. Ein laufendes BricsCAD wird nicht beendet; es behält die geladene Fassung, die neue gilt nach dem nächsten Start.
+
+Alles Nötige lässt sich ohne Systemrechte im Benutzerverzeichnis einrichten. Vorgabe ist `~/.local/opt/opencirt-toolchain`:
+
+```sh
+TC=~/.local/opt/opencirt-toolchain
+python3 -m venv $TC/venv
+$TC/venv/bin/pip install cmake ninja aqtinstall
+$TC/venv/bin/aqt install-qt linux desktop 6.8.2 linux_gcc_64 -O $TC/Qt
+```
+
+Fehlen die OpenGL-Entwicklerdateien im System, genügt es, die Pakete herunterzuladen und nach `$TC/sysroot` zu entpacken (`apt-get download libgl-dev libglx-dev libopengl-dev libegl-dev libgles-dev libglvnd-dev libvulkan-dev libxkbcommon-dev libx11-dev x11proto-dev`, dann je Paket `dpkg -x <paket>.deb $TC/sysroot`).
 
 ### Manuelle Build-Schritte
 
@@ -71,12 +100,15 @@ cmake --build . --config Release
 
 ### Qt- und BricsCAD-Pfade anpassen
 
-Die Pfade in der Root-`CMakeLists.txt` müssen ggf. an die lokale Installation angepasst werden:
+Die Vorgaben stehen in der Root-`CMakeLists.txt`:
 
-```cmake
-set(QT6_DIR "C:/Qt/6.8.3/msvc2022_64")
-set(BRICSCAD_DIR "C:/Program Files/Bricsys/BricsCAD V26 de_DE")
-```
+| Variable | Windows | Linux |
+|---|---|---|
+| `QT6_DIR` | `C:/Qt/6.8.3/msvc2022_64` | `~/.local/opt/opencirt-toolchain/Qt/6.8.2/gcc_64` |
+| `BRICSCAD_DIR` | `C:/Program Files/Bricsys/BricsCAD V26 de_DE` | `/opt/bricsys/bricscad/v26` |
+| `OC_SYSROOT` | – | `~/.local/opt/opencirt-toolchain/sysroot` (optional) |
+
+Abweichende Pfade lassen sich ohne Änderung der Datei setzen: beim Aufruf mit `cmake -DQT6_DIR=… -DBRICSCAD_DIR=…` oder über gleichnamige Umgebungsvariablen.
 
 ## Installation in BricsCAD
 
@@ -84,14 +116,14 @@ set(BRICSCAD_DIR "C:/Program Files/Bricsys/BricsCAD V26 de_DE")
 
 1. BricsCAD starten
 2. Befehl: `APPLOAD`
-3. Zur Datei `batchtool.brx` navigieren und laden
+3. Zur Datei `batchtool-<Version>.brx` (Linux: `batchtool-<Version>.lrx`) navigieren und laden
 4. In der Kommandozeile erscheint: *"Batch Processing Plugin geladen. Befehl: BATCHTOOL"*
 
 ### Automatisch bei jedem Start
 
 1. `APPLOAD` aufrufen
 2. Unten auf *"Inhalt..."* (Startup Suite) klicken
-3. `batchtool.brx` zur Startup Suite hinzufügen
+3. `batchtool-<Version>.brx` (Linux: `batchtool-<Version>.lrx`) zur Startup Suite hinzufügen. Nach einem Versionswechsel den Eintrag auf die neue Datei umstellen – der Dateiname trägt die Version.
 
 ## Befehle
 
@@ -162,10 +194,11 @@ Hinweise:
 
 ### Tab: openCirt
 
-GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Funktionen:
+GA-Planungsautomatisierung (Gebäudeautomation) für TGA-Projekte. Alle Funktionen des Tabs außer dem Plotten bearbeiten die Zeichnungsdateien direkt als Side-Database – ohne sie im Editor zu öffnen, ohne LISP, unter Windows und Linux gleich. Funktionen:
 
-Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über einen einzigen Knopf – Plankopf, Deckblätter, BMK, BAS, GA-FL, Summen und Textbreiten sind Schritte darin und werden nicht mehr einzeln bedient.
+Der Tab hat sechs Schaltflächen. Die eigentliche Projekterstellung läuft über einen einzigen Knopf – Plankopf, Deckblätter, BMK, BAS, GA-FL, Summen und Textbreiten sind Schritte darin und werden nicht mehr einzeln bedient.
 
+- **Projekt aufbauen** – erzeugt die Quellzeichnungen aus der Erstellliste (CSV): Vorlage kopieren, nach Los / ASP / Gewerk / Anlage einsortieren, Attribute setzen, Stempel und Meldungsblöcke füllen. Wahlweise als Vorschau, die nur das Log schreibt. Arbeitet ohne LISP direkt auf den Zeichnungsdateien (`ProjectBuilder`) und ersetzt das LISP-Skript `OC_PROJECT_BUILD`. Beschreibung der Liste: Bedienungsanleitung Abschnitt 3.3
 - **Projekt erstellen** – der Gesamtlauf in korrekter Reihenfolge:
   - *Plankopf* – CSV-basierte Plankopf-Attribute setzen (AG, AN, PR etc.)
   - *Deckblätter* – für die Los/ASP/Gewerk/Anlage-Hierarchie, inkl. ASP, Gewerk und Anlage aus der Ordnerstruktur
@@ -175,34 +208,39 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
   - *Summenblätter* – Gewerk-Summe, ASP-Summe, Los-Summe, Projekt-Summe sowie eine Gewerke-Auswertung je Los über alle ASPs
   - *Textbreiten* – Breitenfaktor in GA-FL- und Summenblättern korrigieren, auch für Werte innerhalb der GA-FL-Blockdefinition
 - **Projekt bereinigen** – temporäre Dateien und Backups im Zeichnungsordner löschen (`*.bak`, `*.dwl`, `*.dwl2`, `*.sv$`, `*.ac$`, `*.tmp`, `*.log`)
-- **PDF publizieren** – DSD-basierter Multi-Sheet-PDF-Export inkl. Inhaltsverzeichnis (22 Einträge pro Seite, Plankopf aus `plankopfdaten.csv`)
-- **IO-Liste erstellen** – ODS-Vorlagen-basierter Export (`OdsTemplateWriter`, Referenz: `iomodule.csv`). Im Dialog wird nach Integrationsart gefiltert (Attribut `OC_INTEGRATIONSART_DP_n`): leer = alle Datenpunkte, `HW` = SPS-/DDC-Belegungsliste mit Modul- und Kanalzuordnung, `BUS;SMI` = mehrere Arten. Die Integrationsart steht als eigene Spalte in der Liste; *Modul-Typ* wird nur für HW-Zeilen gefüllt
-- **Sensorliste erstellen** – Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`)
+- **PDF publizieren** – DSD-basierter Multi-Sheet-PDF-Export inkl. Inhaltsverzeichnis (22 Einträge pro Seite, Plankopf aus `plankopfdaten.csv`). Das Plotten läuft in einer eigenen Batch-Instanz von BricsCAD
+- **IO-Liste erstellen** – Export als CSV-Datei nach `06- Plot` (`CsvListWriter`, Referenz: `iomodule.csv`). Im Dialog wird nach Integrationsart gefiltert (Attribut `OC_INTEGRATIONSART_DP_n`): leer = alle Datenpunkte (`Datenpunktliste.csv`), `HW` = SPS-/DDC-Belegungsliste mit Modul- und Kanalzuordnung (`IO-Belegungsliste.csv`), `BUS;SMI` = mehrere Arten (`Datenpunktliste_BUS-SMI.csv`). Die Integrationsart steht als eigene Spalte in der Liste; *Modul-Typ* wird nur für HW-Zeilen gefüllt
+- **Sensorliste erstellen** – Keyword-Matching gegen Blockattribute (`SensorKeywordLoader`, Referenz: `sensor.csv`), Ausgabe als `Sensorliste.csv` nach `06- Plot`
+
+Die Listen sind CSV-Dateien in UTF-8 mit BOM, Trennzeichen Semikolon, Zeilenende CRLF. Zeile 1 ist die Kopfzeile. LibreOffice und Excel öffnen sie direkt; eine Vorlage ist nicht nötig.
 
 ## Projektstruktur
 
 ```
 ├── CMakeLists.txt              Root-Build-Konfiguration
-├── CLEAN_BUILD.bat             Build-Skript
-├── KNOWN_ISSUES.md             Bekannte Probleme in BricsCAD/Windows (GDI-Objekt-Leck)
+├── CLEAN_BUILD.bat             Build-Skript Windows
+├── CLEAN_BUILD.sh              Build-Skript Linux
+├── KNOWN_ISSUES.md             Bekannte Probleme in BricsCAD (Windows: GDI-Objekt-Leck, Linux: LISP) – betreffen seit 1.7 nur den LISP-Tab
 ├── LICENSE                     BSL 1.1 Lizenz
 ├── .gitignore
 ├── docs/
-│   └── DEVELOPMENT.md          Entwickler-Hinweise
+│   ├── DEVELOPMENT.md          Entwickler-Hinweise
+│   └── bricscad-linux-bugs/    Fehlerberichte zu BricsCAD für Linux, mit Skripten zum Nachstellen
 ├── tools/
 │   └── Close-BricsCAD.ps1      Beendet BricsCAD vor dem Build
 ├── external/
 │   └── brx_sdk/                BRX SDK (nicht im Repository)
 ├── sample_project/
-│   ├── 00- BricsCAD Plugin/    Kompiliertes BRX-Binary
+│   ├── 00- BricsCAD Plugin/    Kompiliertes Plugin (batchtool-<Version>.brx für Windows, batchtool-<Version>.lrx für Linux)
 │   ├── 01- Referenzen/
 │   │   ├── BAS.csv             BAS-Konfiguration
 │   │   ├── GA_FL_VORLAGE.ods   GA-FL Vorlage
+│   │   ├── Erstellliste_VORLAGE.csv Erstellliste mit allen Spalten und Beispielzeilen
 │   │   ├── iomodule.csv        IO-Modul-Referenzdaten
 │   │   ├── opencirt_config.json Projektkonfiguration
 │   │   ├── plankopfdaten.csv   Plankopf-Attribute
 │   │   └── sensor.csv          Sensor-Referenzdaten
-│   ├── 02- Skripte/            LISP-Skripte
+│   ├── 02- Skripte/            LISP-Skripte (Vorlage der Schritte des Gesamtlaufs, seit 1.7 nur noch für den LISP-Tab)
 │   ├── 03- Blockbibliothek/    DWG-Blockvorlagen
 │   ├── 04- Vorlagen/
 │   │   ├── OC_RSH_Plankopf_quer_V21.dwg
@@ -211,9 +249,7 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
 │   │   ├── OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg
 │   │   ├── OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg
 │   │   ├── OC_VORLAGE_GA_FL.dwg
-│   │   ├── VDI3814_GA_FL_V_1_0.dwg
-│   │   ├── OC_VORLAGE_IO_BELEGUNG_V_1.ods
-│   │   └── OC_VORLAGE_SENSORLISTE_V_1.ods
+│   │   └── VDI3814_GA_FL_V_1_0.dwg
 │   ├── 05- Projekt Zeichnungen/
 │   ├── 06- Plot/
 │   └── BEDIENUNGSANLEITUNG.md  Bedienungsanleitung (12 Kapitel)
@@ -222,12 +258,14 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
     ├── brx_force_include.h     BRX Platform-Header
     ├── core/
     │   ├── DwgProcessor.cpp/h      DWG-Verarbeitungslogik (Text, Attribute, Layer)
-    │   └── LispProcessExecutor.cpp/h   In-Process LISP-Ausführung via _.SCRIPT
+    │   ├── LispProcessExecutor.cpp/h   In-Process LISP-Ausführung via _.SCRIPT
+    │   ├── OpenCirtEngine.cpp/h    Schritte des Gesamtlaufs auf der Side-Database (BMK, BAS, Extraktion, GA-FL, Textbreiten)
+    │   └── ProjectBuilder.cpp/h    Projektaufbau aus der Erstellliste
     ├── data/
     │   ├── ProcessingOptions.h         Datenstrukturen und Optionen
     │   ├── ProcessingOptionsImpl.cpp   LISP Script Manager
     │   └── Configuration.cpp           Settings-Persistenz
-    ├── mfc_stubs/              Leere MFC/ATL-Stubs (Qt-basiert, kein MFC)
+    ├── mfc_stubs/              Leere MFC/ATL-Stubs (Qt-basiert, kein MFC; nur Windows)
     ├── plugin/
     │   ├── BatchProcessingPlugin.cpp/h   BRX Entry Point (acrxEntryPoint)
     │   └── Commands.cpp/h              Befehlsregistrierung
@@ -240,7 +278,7 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
     └── utils/
         ├── Logger.h                    Logging-Hilfsfunktionen
         ├── SensorKeywordLoader.cpp/h   Keyword-Abgleich für die Sensorliste
-        └── OdsTemplateWriter.cpp/h     ODS-Vorlagen befüllen
+        └── CsvListWriter.cpp/h         Listen als CSV schreiben
 ```
 
 ## Hinweise
@@ -248,6 +286,8 @@ Der Tab hat fünf Schaltflächen. Die eigentliche Projekterstellung läuft über
 - Vor dem ersten produktiven Einsatz immer mit aktivierten Backups arbeiten.
 - LISP-Skripte vorher manuell an einer einzelnen DWG testen.
 - Layer-Analyse vor Layer-Operationen durchführen, um Tippfehler zu vermeiden.
+- Unter Linux läuft der LISP-Tab nur mit leichten Skripten zuverlässig – Ursache sind Fehler in BricsCAD für Linux, siehe [KNOWN_ISSUES.md](KNOWN_ISSUES.md) Abschnitt 2. Alle übrigen Funktionen laufen unter Windows und Linux gleich.
+- Für „Projekt aufbauen" und „Projekt erstellen" darf keine Zeichnung des Projekts in BricsCAD geöffnet sein.
 - Mehrere Tabs können gleichzeitig aktiviert sein. Die Verarbeitung erfolgt in der Reihenfolge: Text → Attribute → Layer → LISP.
 
 ## Lizenz

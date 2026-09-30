@@ -15,7 +15,6 @@ void unregisterCommands();
 
 // Command implementations
 void batchProcessCommand();
-void phase3PrepareCommand();
 
 } // namespace Commands
 } // namespace BatchProcessing

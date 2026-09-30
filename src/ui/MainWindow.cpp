@@ -2026,7 +2026,13 @@ QStringList MainWindow::findDwgFilesRecursive(const QDir& dir,
             }
         }
     }
-    
+
+#ifndef _WIN32
+    // Windows liefert Verzeichniseintraege nach Namen geordnet, Linux in
+    // beliebiger Reihenfolge. Hier dieselbe Reihenfolge herstellen.
+    files.sort(Qt::CaseInsensitive);
+#endif
+
     return files;
 }
 

@@ -72,6 +72,14 @@ public:
     bool debugMode() const { return m_debugMode; }
     
     static LispExecutionConfig createDefaultConfig();
+
+#ifndef _WIN32
+    /// Linux: uebergibt "_.SCRIPT <Pfad>" per sendStringToExecute an die
+    /// laufende BricsCAD-Instanz. acedCommand wird dort aus dem
+    /// Anwendungskontext (Qt-Ereignis) zwar angenommen, aber nie ausgefuehrt.
+    /// Rueckgabe: RTNORM bei Erfolg, sonst RTERROR.
+    static int sendScriptToEditor(const QString& scriptPath);
+#endif
     
     /// Create config from global ProcessingOptions (v5.1 simplified)
     static LispExecutionConfig createConfigFromOptions(const ::ProcessingOptions& options, const QList<QString>& dwgFiles) {

@@ -351,6 +351,7 @@ bool LispProcessExecutor::executeScriptInProcess(const QString& scriptPath) {
     // Execute _.SCRIPT in the current BricsCAD instance
     // This is the same as (command "_.SCRIPT" "path") in LISP
     // After this call, BricsCAD takes over and processes the SCR line by line
+#ifdef _WIN32
 #ifdef _UNICODE
     int rc = acedCommand(
         RTSTR, _T("_.SCRIPT"),
@@ -364,6 +365,9 @@ bool LispProcessExecutor::executeScriptInProcess(const QString& scriptPath) {
         RTNONE
     );
 #endif
+#else
+    int rc = sendScriptToEditor(path);
+#endif
     
     if (rc != RTNORM) {
         logError(QString("acedCommand(_.SCRIPT) failed with code: %1").arg(rc));
@@ -374,6 +378,26 @@ bool LispProcessExecutor::executeScriptInProcess(const QString& scriptPath) {
     logInfo("_.SCRIPT command accepted - BricsCAD is processing...");
     return true;
 }
+
+#ifndef _WIN32
+int LispProcessExecutor::sendScriptToEditor(const QString& scriptPath) {
+    AcApDocument* pDoc = acDocManager ? acDocManager->curDocument() : nullptr;
+    if (!pDoc) {
+        return RTERROR;
+    }
+
+    // Same input the SCRIPT command gets on Windows; the trailing newline
+    // confirms the file name. FILEDIA is 0 at this point, so the command
+    // asks on the command line instead of opening a file dialog.
+    const QString cmd = QString("_.SCRIPT \"%1\"\n").arg(scriptPath);
+    const Acad::ErrorStatus es = acDocManager->sendStringToExecute(
+        pDoc, cmd.toStdWString().c_str(),
+        false,   // bActivate: keep the focus where it is
+        false,   // bWrapUpInactiveDoc
+        false);  // bEchoString: CMDECHO is 0 during batch runs
+    return (es == Acad::eOk) ? RTNORM : RTERROR;
+}
+#endif
 
 // ============================================================================
 // VALIDATION

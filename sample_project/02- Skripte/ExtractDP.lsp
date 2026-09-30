@@ -1,6 +1,8 @@
 ;;; =====================================================================
 ;;; ExtractDP.lsp - Datenpunkt-Extraktion für GA-FL Generierung
 ;;; =====================================================================
+;;; Version: 1.7
+;;;   - Linux: Log-Pfad ohne die Umgebungsvariable TEMP (TMPDIR, sonst /tmp)
 ;;; Version: 1.5
 ;;;   - Logging: oc-log schreibt auf Konsole UND in Logdatei (extractdp_log.txt)
 ;;;   - Sortierung: Hauptlinie per Y-Cluster-Analyse, Ausreisser davor
@@ -183,9 +185,12 @@
                     plankopf-data plankopf-line)
 
   ;; Log-Pfad setzen: im TEMP/OpenCirt_extract Verzeichnis
+  ;; Windows: %TEMP%. Linux kennt TEMP nicht, dort TMPDIR, sonst /tmp.
   (if (not (and (boundp '*oc-extract-log-path*) *oc-extract-log-path*))
     (setq *oc-extract-log-path*
-      (strcat (vl-string-right-trim "/\\" (getenv "TEMP")) "/OpenCirt_extract/extractdp_log.txt"))
+      (strcat (vl-string-right-trim "/\\"
+                (cond ((getenv "TEMP")) ((getenv "TMPDIR")) (T "/tmp")))
+              "/OpenCirt_extract/extractdp_log.txt"))
   )
 
   (oc-log "\n=== Datenpunkt-Extraktion gestartet ===")
@@ -455,5 +460,5 @@
   (ExtractDP)
 )
 
-(oc-log "\nExtractDP.lsp geladen (v1.6 + OC_PRODUKT)")
+(oc-log "\nExtractDP.lsp geladen (v1.7 + OC_PRODUKT)")
 (princ)

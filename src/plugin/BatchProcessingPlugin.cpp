@@ -26,6 +26,9 @@
 // Global variables
 static bool g_isInitialized = false;
 static QApplication* g_qApp = nullptr;
+// true, wenn das Plugin die QApplication selbst erzeugt hat und sie beim
+// Entladen auch wieder freigeben muss
+static bool g_ownsQApp = false;
 static BatchProcessing::MainWindow* g_mainWindow = nullptr;
 
 // ============================================================================
@@ -43,11 +46,24 @@ AcRx::AppRetCode acrxEntryPoint(AcRx::AppMsgCode msg, void* pAppId)
             
             // Initialisiere Qt falls noch nicht geschehen
             if (!g_qApp) {
-                static int argc = 1;
-                static char* argv[] = { (char*)"BatchProcessing", nullptr };
-                g_qApp = new QApplication(argc, argv);
-                g_qApp->setApplicationName("BatchProcessing");
-                g_qApp->setOrganizationName("openCirt");
+                if (QCoreApplication::instance()) {
+                    // Der Host betreibt bereits eine Qt-Anwendung (BricsCAD
+                    // unter Linux). Eine zweite Instanz ist nicht zulaessig,
+                    // die vorhandene wird mitbenutzt und bleibt unveraendert.
+                    g_qApp = qobject_cast<QApplication*>(QCoreApplication::instance());
+                    g_ownsQApp = false;
+                    if (!g_qApp) {
+                        acutPrintf(_T("\nBatch Processing Plugin: vorhandene Qt-Instanz ist keine QApplication - Oberflaeche nicht verfuegbar.\n"));
+                        return AcRx::kRetError;
+                    }
+                } else {
+                    static int argc = 1;
+                    static char* argv[] = { (char*)"BatchProcessing", nullptr };
+                    g_qApp = new QApplication(argc, argv);
+                    g_qApp->setApplicationName("BatchProcessing");
+                    g_qApp->setOrganizationName("openCirt");
+                    g_ownsQApp = true;
+                }
             }
             
             // Registriere Commands
@@ -69,8 +85,12 @@ AcRx::AppRetCode acrxEntryPoint(AcRx::AppMsgCode msg, void* pAppId)
             BatchProcessing::Commands::unregisterCommands();
             
             if (g_qApp) {
-                delete g_qApp;
+                // Nur die selbst erzeugte Instanz freigeben, nie die des Hosts
+                if (g_ownsQApp) {
+                    delete g_qApp;
+                }
                 g_qApp = nullptr;
+                g_ownsQApp = false;
             }
             
             g_isInitialized = false;
@@ -114,25 +134,6 @@ void registerCommands() {
         ACRX_CMD_MODAL,
         batchProcessCommand
     );
-
-    // Wird vom Phase-2-Skript des Gesamtlaufs aufgerufen, sobald das letzte
-    // GA-FL-Blatt gespeichert ist (siehe OpenCirtTab::preparePhase3).
-    acedRegCmds->addCommand(
-        _T("BATCH_PROCESSING_CMDS"),
-        _T("OC_PHASE3_PREPARE"),
-        _T("OC_PHASE3_PREPARE"),
-        ACRX_CMD_MODAL,
-        phase3PrepareCommand
-    );
-}
-
-// OC_PHASE3_PREPARE: Summen-Phase des Gesamtlaufs vorbereiten
-void phase3PrepareCommand() {
-    if (!g_mainWindow || !g_mainWindow->openCirtTab()) {
-        acutPrintf(_T("\nOC_PHASE3_PREPARE: Batchtool-Fenster nicht initialisiert.\n"));
-        return;
-    }
-    g_mainWindow->openCirtTab()->preparePhase3();
 }
 
 void unregisterCommands() {

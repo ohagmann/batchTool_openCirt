@@ -1,12 +1,14 @@
 # Bekannte Probleme
 
-Hier stehen Probleme, die beim Einsatz von openCirt auftreten, deren Ursache aber nicht im Plugin liegt, sondern in BricsCAD oder Windows. Für Änderungen und behobene Fehler im Plugin selbst siehe [CHANGELOG.md](CHANGELOG.md), für Bedienfehler die [Bedienungsanleitung](sample_project/BEDIENUNGSANLEITUNG.md), Abschnitt 12.
+Hier stehen Probleme, die beim Einsatz von openCirt auftreten, deren Ursache aber nicht im Plugin liegt, sondern in BricsCAD oder im Betriebssystem. Abschnitt 1 betrifft Windows, Abschnitt 2 Linux. Für Änderungen und behobene Fehler im Plugin selbst siehe [CHANGELOG.md](CHANGELOG.md), für Bedienfehler die [Bedienungsanleitung](sample_project/BEDIENUNGSANLEITUNG.md), Abschnitt 12.
 
 ---
 
-## 1. GDI-Objekt-Leck in BricsCAD V26 – Absturz beim zweiten Gesamtlauf in derselben Sitzung
+## 1. GDI-Objekt-Leck in BricsCAD V26 – Absturz nach vielen geöffneten Dokumenten
 
 **Betrifft:** BricsCAD V26 unter Windows, beobachtet mit V26.2.07 (Stand September 2026). Ob neuere Versionen betroffen sind, ist nicht geprüft.
+
+**Seit Version 1.7.0 trifft es den Gesamtlauf nicht mehr:** „Projekt erstellen" und das Inhaltsverzeichnis bearbeiten die Zeichnungen ohne Editor und öffnen keine Dokumente. Betroffen bleibt, was Zeichnungen im Editor öffnet – der LISP-Tab mit vielen Dateien. Die folgende Beschreibung gilt für Versionen bis 1.6 und für solche Läufe.
 
 ### Symptom
 
@@ -62,3 +64,48 @@ Hinweise:
 
 - `SDI=1` zur Laufzeit setzen: `OPEN` öffnet weiterhin zusätzliche Dokumente, das Leck bleibt.
 - Plugin entladen oder Startup-Suite leeren: das Leck tritt auch ohne jede Erweiterung auf.
+
+---
+
+## 2. BricsCAD V26 für Linux: LISP über viele Zeichnungen ist unzuverlässig
+
+**Betrifft:** BricsCAD V26 unter Linux, beobachtet mit V26.2.07 (Stand 29.09.2026). Die Versionshinweise bis V26.2.08 nennen keine Korrektur. Unter Windows treten beide Fehler nicht auf.
+
+**Seit Version 1.7.0 betrifft es nur noch den LISP-Tab.** Der Gesamtlauf, der Projektaufbau und das Inhaltsverzeichnis kommen ohne LISP aus.
+
+### Symptom
+
+- Im **LISP-Tab** laufen leichte Skripte über beliebig viele Zeichnungen. Rechenintensive Skripte brechen ab der dritten Zeichnung ab; in der Befehlszeile von BricsCAD steht `out of LISP 'Heap' memory at [gc]`.
+- LISP-Code, der mit vla-Funktionen arbeitet, scheitert in einzelnen Zeichnungen mit `Automation Error DISP_E_UNKNOWNNAME` – welche es trifft, wechselt von Lauf zu Lauf.
+- Bis Version 1.6 lief deshalb der Gesamtlauf **„Projekt erstellen"** unter Linux nicht durch: Phase 1 endete nach wenigen Sekunden mit „Keine extrahierten Datenpunkte gefunden".
+
+### Ursache
+
+Zwei voneinander unabhängige Fehler in der LISP-Umgebung von BricsCAD für Linux:
+
+1. **LISP-Heap.** Jedes Dokument hat seine eigene LISP-Umgebung. Nur in den ersten beiden Dokumenten einer Sitzung, deren LISP-Code eine Speicherbereinigung auslöst, gelingt diese. Ab dem dritten bricht LISP mit „out of LISP 'Heap' memory" ab.
+2. **vla-Objekte.** Nach einigen geöffneten und wieder geschlossenen Dokumenten liefern `vla-Open` und `vlax-ename->vla-object` gelegentlich ein Objekt des falschen Typs – ein frisch geöffnetes Dokument gilt dann zum Beispiel als Attribut.
+
+Beide Fehler lassen sich ohne das Plugin in einem leeren Benutzerprofil nachstellen. Die Fehlerberichte für Bricsys mit Skripten zum Nachstellen liegen unter [docs/bricscad-linux-bugs](docs/bricscad-linux-bugs/README.md).
+
+### Was unter Linux geht und was nicht
+
+| Funktion | Linux |
+|---|---|
+| Tabs Text, Attributes, Layers | ja – sie bearbeiten die Zeichnungen ohne LISP |
+| Projekt aufbauen (Erstellliste) | ja – ohne LISP |
+| Projekt erstellen (Gesamtlauf) | ja – seit 1.7.0 ohne LISP, geprüft an einem Projekt mit 867 Blättern |
+| Projekt bereinigen | ja |
+| PDF publizieren | Inhaltsverzeichnis ja (seit 1.7.0 ohne LISP, geprüft mit 18 Seiten). Das Plotten selbst ist am Beispielprojekt geprüft, an einem großen Projekt nicht |
+| IO-Liste / Datenpunktliste | ja – liest die fertigen GA-FL-Blätter ohne LISP |
+| Sensorliste | ja |
+| LISP-Tab | nur mit leichten Skripten zuverlässig |
+
+### Abhilfe
+
+Für den LISP-Tab gibt es im Plugin keine. Rechenintensive Skripte über viele Zeichnungen laufen unter Windows; die Projektordner sind zwischen beiden Systemen austauschbar.
+
+### Was nicht hilft
+
+- Die Einstellungen der LISP-Umgebung (`liblispex.so.cfg`, `LISPINIT`), `SDI=1`, ein ausdrückliches `(gc)` oder `vlax-release-object` ändern nichts.
+- `NEXTFIBERWORLD=0`: danach führt BricsCAD Skripte, die beim Start mit `-b` übergeben werden, nicht mehr aus. Das trifft den PDF-Publish.

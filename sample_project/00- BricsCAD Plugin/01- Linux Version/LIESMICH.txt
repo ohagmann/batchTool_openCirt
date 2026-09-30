@@ -1,0 +1,27 @@
+batchtool-<Version>.lrx - batchTool / openCirt fuer BricsCAD V26 unter Linux
+============================================================================
+
+Stand: Version 1.7.1 (30.09.2026), gebaut gegen BricsCAD V26.2.07 (Qt 6.8.2)
+Der Dateiname traegt die Version, z.B. batchtool-1.7.1.lrx.
+
+Laden
+  1. Die Datei an einen festen Ort kopieren, z.B. ~/BricsCAD Plugins/
+  2. In BricsCAD: APPLOAD, batchtool-<Version>.lrx waehlen, laden
+     (Startup Suite: nach einem Versionswechsel den Eintrag umstellen)
+  3. Befehl: BATCHTOOL
+
+Weitere Dateien sind nicht noetig. Das Plugin benutzt die Qt-Bibliotheken,
+die BricsCAD mitbringt.
+
+Unter Linux laeuft alles wie unter Windows:
+  - Tabs Text, Attributes, Layers
+  - Projekt aufbauen (Erstellliste)
+  - Projekt erstellen (Gesamtlauf)
+  - Projekt bereinigen
+  - PDF publizieren mit Inhaltsverzeichnis
+  - IO-Liste / Datenpunktliste, Sensorliste
+
+Einzige Einschraenkung: der LISP-Tab. Leichte Skripte laufen ueber beliebig
+viele Zeichnungen, rechenintensive brechen ab der dritten Zeichnung ab.
+Ursache sind zwei Fehler in der LISP-Umgebung von BricsCAD fuer Linux,
+nicht das Plugin. Einzelheiten: KNOWN_ISSUES.md, Abschnitt 2.

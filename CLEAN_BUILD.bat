@@ -11,7 +11,7 @@ echo Clean Build - Qt 6.8+ Windows Header Fix
 echo ============================================================
 echo.
 
-REM Step 0: BricsCAD beenden - haelt sonst batchtool.brx gesperrt
+REM Step 0: BricsCAD beenden - haelt sonst das geladene Plugin gesperrt
 echo ============================================================
 echo [STEP 0] Laufende BricsCAD-Instanzen beenden
 echo ============================================================
@@ -20,7 +20,7 @@ if /I "%~1"=="/force" set "CLOSE_ARGS=-Force"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Close-BricsCAD.ps1" %CLOSE_ARGS%
 if errorlevel 1 (
     echo.
-    echo BUILD ABGEBROCHEN - BricsCAD blockiert batchtool.brx.
+    echo BUILD ABGEBROCHEN - BricsCAD blockiert das geladene Plugin.
     pause
     exit /b 1
 )
@@ -76,8 +76,13 @@ echo ============================================================
 echo ✅ BUILD SUCCESSFUL!
 echo ============================================================
 echo.
-echo Output: build_windows\Release\batchtool.brx
+echo Output: build_windows\Release\batchtool-^<Version^>.brx
 echo.
-dir build_windows\Release\batchtool.brx
+dir /b build_windows\Release\batchtool-*.brx
+echo.
+echo Kopie im Beispielprojekt: sample_project\00- BricsCAD Plugin\00- Windows Version\
+dir /b "sample_project\00- BricsCAD Plugin\00- Windows Version\batchtool-*.brx"
+echo.
+echo Steht die Datei in der Startup Suite, dort den Eintrag auf die neue Version umstellen.
 echo.
 pause

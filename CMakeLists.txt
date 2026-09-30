@@ -15,7 +15,7 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md")
 
-project(BricsCAD_BatchProcessing_Windows VERSION ${CMAKE_MATCH_1})
+project(BricsCAD_BatchProcessing VERSION ${CMAKE_MATCH_1})
 message(STATUS "openCirt Version (aus CHANGELOG.md): ${PROJECT_VERSION}")
 
 # C++ Standard
@@ -28,13 +28,48 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ============================================================================
-# Windows-Pfade definieren
+# Plattform-Pfade definieren
 # ============================================================================
-set(QT6_DIR "C:/Qt/6.8.3/msvc2022_64")
+# Die Vorgaben lassen sich ohne Aenderung dieser Datei ueberschreiben:
+#   cmake -DQT6_DIR=... -DBRICSCAD_DIR=... -DOC_SYSROOT=...
+# oder ueber gleichnamige Umgebungsvariablen (siehe CLEAN_BUILD.sh).
 set(BRX_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/brx_sdk")
 set(BRX_INC_DIR "${BRX_SDK_PATH}/inc")
-set(BRX_LIB_DIR "${BRX_SDK_PATH}/lib64")
-set(BRICSCAD_DIR "C:/Program Files/Bricsys/BricsCAD V26 de_DE")
+
+if(WIN32)
+    set(_oc_qt6_default "C:/Qt/6.8.3/msvc2022_64")
+    set(_oc_bricscad_default "C:/Program Files/Bricsys/BricsCAD V26 de_DE")
+    # Import-Bibliotheken (brx26.lib) liegen im SDK
+    set(BRX_LIB_DIR "${BRX_SDK_PATH}/lib64")
+else()
+    # Qt muss zur Version passen, die BricsCAD mitbringt (V26: Qt 6.8.2).
+    # Das Plugin laeuft im BricsCAD-Prozess und benutzt dessen Qt-Bibliotheken.
+    set(_oc_qt6_default "$ENV{HOME}/.local/opt/opencirt-toolchain/Qt/6.8.2/gcc_64")
+    set(_oc_bricscad_default "/opt/bricsys/bricscad/v26")
+    # Optional: Verzeichnis mit lokal entpackten Entwicklerpaketen
+    # (OpenGL-/xkbcommon-Header), falls sie nicht systemweit installiert sind.
+    set(_oc_sysroot_default "$ENV{HOME}/.local/opt/opencirt-toolchain/sysroot")
+endif()
+
+foreach(_oc_var QT6_DIR BRICSCAD_DIR OC_SYSROOT)
+    if(NOT DEFINED ${_oc_var} AND DEFINED ENV{${_oc_var}})
+        set(${_oc_var} "$ENV{${_oc_var}}")
+    endif()
+endforeach()
+if(NOT DEFINED QT6_DIR)
+    set(QT6_DIR "${_oc_qt6_default}")
+endif()
+if(NOT DEFINED BRICSCAD_DIR)
+    set(BRICSCAD_DIR "${_oc_bricscad_default}")
+endif()
+if(NOT WIN32)
+    if(NOT DEFINED OC_SYSROOT)
+        set(OC_SYSROOT "${_oc_sysroot_default}")
+    endif()
+    # Unter Linux wird direkt gegen die Bibliotheken der Installation gelinkt
+    # (libbrx26.so, libdrx_entrypoint.a, libTD_*.so)
+    set(BRX_LIB_DIR "${BRICSCAD_DIR}")
+endif()
 
 # Prüfungen
 if(NOT EXISTS ${BRX_SDK_PATH})
@@ -54,9 +89,33 @@ message(STATUS "✅ BRX SDK: ${BRX_SDK_PATH}")
 message(STATUS "✅ BricsCAD V26: ${BRICSCAD_DIR}")
 
 # ============================================================================
+# Linux: Grundeinstellungen
+# ============================================================================
+if(NOT WIN32)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+    # Nur der BRX-Einstiegspunkt wird exportiert. Alles andere bleibt intern,
+    # damit gleichnamige Symbole des Hosts nicht mit den eigenen kollidieren.
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_C_VISIBILITY_PRESET hidden)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+    # Kein RPATH auf das Qt-SDK: zur Laufzeit gelten die Bibliotheken, die
+    # BricsCAD bereits geladen hat.
+    set(CMAKE_SKIP_RPATH ON)
+
+    if(EXISTS "${OC_SYSROOT}/usr/include")
+        message(STATUS "✅ Lokale Entwicklerpakete: ${OC_SYSROOT}")
+        list(APPEND CMAKE_PREFIX_PATH "${OC_SYSROOT}/usr")
+        list(APPEND CMAKE_INCLUDE_PATH "${OC_SYSROOT}/usr/include")
+        list(APPEND CMAKE_LIBRARY_PATH "${OC_SYSROOT}/usr/lib/x86_64-linux-gnu")
+    endif()
+endif()
+
+# ============================================================================
 # Qt6 Setup
 # ============================================================================
-set(CMAKE_PREFIX_PATH "${QT6_DIR}")
+list(PREPEND CMAKE_PREFIX_PATH "${QT6_DIR}")
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
 set(CMAKE_AUTOMOC ON)
@@ -66,23 +125,39 @@ set(CMAKE_AUTORCC ON)
 # ============================================================================
 # Windows Fix Header - manually maintained for Qt 6.8+ compatibility
 # ============================================================================
+# Der Header ist auf allen Plattformen vorhanden; sein Inhalt ist vollstaendig
+# von _WIN32 abhaengig und unter Linux leer.
 set(WINDOWS_FIX_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/windows_fix.h")
 if(NOT EXISTS "${WINDOWS_FIX_HEADER}")
     message(FATAL_ERROR "windows_fix.h not found at ${WINDOWS_FIX_HEADER}")
 endif()
-message(STATUS "✅ Using manual windows_fix.h: ${WINDOWS_FIX_HEADER}")
+if(WIN32)
+    message(STATUS "✅ Using manual windows_fix.h: ${WINDOWS_FIX_HEADER}")
+endif()
 
 # ============================================================================
 # Include Directories
 # ============================================================================
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src  # For windows_fix.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/mfc_stubs  # Empty MFC/ATL stubs for Qt-based plugin (no MFC needed)
+)
+if(WIN32)
+    include_directories(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mfc_stubs  # Empty MFC/ATL stubs for Qt-based plugin (no MFC needed)
+    )
+endif()
+include_directories(
     ${BRX_INC_DIR}
+)
+if(NOT WIN32)
     # CRITICAL: Platform/substitutes contains EMPTY stubs for windows.h, intrin.h, windef.h
-    # These are ONLY for Linux cross-compilation and MUST NOT be used on Windows!
+    # These are ONLY for Linux/Mac builds and MUST NOT be used on Windows!
     # They shadow the real Windows SDK headers and cause all CALLBACK/HANDLE/intrinsics errors.
-    # ${BRX_INC_DIR}/Platform/substitutes  # DISABLED ON WINDOWS!
+    include_directories(
+        ${BRX_INC_DIR}/Platform/substitutes
+    )
+endif()
+include_directories(
     ${BRX_INC_DIR}/Platform/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/data
@@ -100,93 +175,52 @@ set(PLUGIN_SOURCES
     src/plugin/Commands.cpp
     src/core/DwgProcessor.cpp
     src/core/LispProcessExecutor.cpp
+    src/core/ProjectBuilder.cpp
+    src/core/OpenCirtEngine.cpp
     src/data/ProcessingOptionsImpl.cpp
     src/ui/MainWindow.cpp
     src/ui/OpenCirtTab.cpp
     src/ui/Theming.cpp
     src/ui/widgets/AcadColorGrid.cpp
     src/utils/SensorKeywordLoader.cpp
-    src/utils/OdsTemplateWriter.cpp
+    src/utils/CsvListWriter.cpp
 )
 
 set(PLUGIN_HEADERS
     src/core/DwgProcessor.h
     src/core/LispProcessExecutor.h
+    src/core/ProjectBuilder.h
+    src/core/OpenCirtEngine.h
+    src/core/TextAlignment.h
     src/data/ProcessingOptions.h
     src/ui/MainWindow.h
     src/ui/OpenCirtTab.h
     src/ui/Theming.h
     src/ui/widgets/AcadColorGrid.h
     src/utils/SensorKeywordLoader.h
-    src/utils/OdsTemplateWriter.h
+    src/utils/CsvListWriter.h
 )
-
-# ============================================================================
-# External Libraries: QuaZip + pugixml (fuer ODS-Generierung)
-# ============================================================================
-
-# pugixml - Header-only XML Parser
-# Erwarteter Pfad: external/pugixml/
-# Installation: git clone https://github.com/zeux/pugixml external/pugixml
-set(PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml")
-if(EXISTS "${PUGIXML_DIR}/src/pugixml.hpp")
-    message(STATUS "pugixml: ${PUGIXML_DIR}")
-    include_directories(${PUGIXML_DIR}/src)
-    # pugixml ist Header-only mit einer .cpp Datei
-    list(APPEND PLUGIN_SOURCES ${PUGIXML_DIR}/src/pugixml.cpp)
-else()
-    message(WARNING "pugixml nicht gefunden! Sensorliste/IO-Belegung deaktiviert.")
-    message(WARNING "Installation: git clone https://github.com/zeux/pugixml external/pugixml")
-endif()
-
-# QuaZip - Qt-Wrapper fuer ZIP (ODS = ZIP + XML)
-# Erwarteter Pfad: external/quazip/ (CMake-basiert)
-# Installation: git clone https://github.com/stachenov/quazip external/quazip
-set(QUAZIP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/quazip")
-if(EXISTS "${QUAZIP_DIR}/CMakeLists.txt")
-    message(STATUS "QuaZip: ${QUAZIP_DIR}")
-
-    # zlib via FetchContent bereitstellen (Qt6 exportiert kein ZLIB-Target)
-    include(FetchContent)
-    FetchContent_Declare(zlib
-        GIT_REPOSITORY https://github.com/madler/zlib.git
-        GIT_TAG        v1.3.1
-    )
-    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(zlib)
-
-    # find_package(ZLIB) die gerade gebaute zlib zeigen
-    set(ZLIB_INCLUDE_DIR "${zlib_SOURCE_DIR};${zlib_BINARY_DIR}" CACHE PATH "" FORCE)
-    set(ZLIB_LIBRARY zlibstatic CACHE STRING "" FORCE)
-    set(ZLIB_FOUND TRUE CACHE BOOL "" FORCE)
-    # ZLIB::ZLIB Imported Target erstellen (QuaZip erwartet das)
-    if(NOT TARGET ZLIB::ZLIB)
-        add_library(ZLIB::ZLIB ALIAS zlibstatic)
-    endif()
-
-    set(QUAZIP_QT_MAJOR_VERSION 6 CACHE STRING "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_USE_QT_ZLIB OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_FETCH_LIBS OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_FORCE_FETCH_LIBS OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_ENABLE_QTEXTCODEC OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_BZIP2 OFF CACHE BOOL "" FORCE)
-    set(QUAZIP_INSTALL OFF CACHE BOOL "" FORCE)
-    add_subdirectory(${QUAZIP_DIR} ${CMAKE_BINARY_DIR}/quazip)
-    # QuaZip erstellt Target "QuaZip::QuaZip"
-else()
-    message(WARNING "QuaZip nicht gefunden! Sensorliste/IO-Belegung deaktiviert.")
-    message(WARNING "Installation: git clone https://github.com/stachenov/quazip external/quazip")
-endif()
 
 # ============================================================================
 # BricsCAD Libraries
 # ============================================================================
-find_library(BRX26_LIB NAMES brx26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
-find_library(BRXHLRAPI26_LIB NAMES BrxHlrApi26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
-find_library(BRXATIL26_LIB NAMES BrxATIL26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
+if(WIN32)
+    find_library(BRX26_LIB NAMES brx26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
+    find_library(BRXHLRAPI26_LIB NAMES BrxHlrApi26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
+    find_library(BRXATIL26_LIB NAMES BrxATIL26.lib PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
+else()
+    find_library(BRX26_LIB NAMES brx26 PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
+    find_library(BRXHLRAPI26_LIB NAMES brxhlrapi26 PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
+    find_library(BRXATIL26_LIB NAMES brxatil26 PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH)
+    # Teigha-Basisbibliotheken (Speicherverwaltung, Laufzeitkern), siehe LinuxBuild.txt
+    find_library(TD_ALLOC_LIB NAMES TD_Alloc PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
+    find_library(TD_ROOT_LIB NAMES TD_Root PATHS ${BRX_LIB_DIR} NO_DEFAULT_PATH REQUIRED)
+    # Statischer Einstiegspunkt: muss vollstaendig in das Modul uebernommen werden
+    set(DRX_ENTRYPOINT_LIB "${BRX_LIB_DIR}/libdrx_entrypoint.a")
+    if(NOT EXISTS "${DRX_ENTRYPOINT_LIB}")
+        message(FATAL_ERROR "libdrx_entrypoint.a not found at ${DRX_ENTRYPOINT_LIB}")
+    endif()
+endif()
 
 message(STATUS "✅ BRX26: ${BRX26_LIB}")
 if(BRXHLRAPI26_LIB)
@@ -199,7 +233,7 @@ endif()
 # ============================================================================
 # Target
 # ============================================================================
-add_library(batch_processing_plugin SHARED 
+add_library(batch_processing_plugin SHARED
     ${PLUGIN_SOURCES}
     ${PLUGIN_HEADERS}
 )
@@ -214,12 +248,23 @@ target_compile_definitions(batch_processing_plugin PRIVATE
     _UNICODE
     UNICODE
     BRXAPI
-    WINDOWS
-    _WINDOWS
-    WIN64
-    _WIN64
-    NOMINMAX
 )
+if(WIN32)
+    target_compile_definitions(batch_processing_plugin PRIVATE
+        WINDOWS
+        _WINDOWS
+        WIN64
+        _WIN64
+        NOMINMAX
+    )
+else()
+    target_compile_definitions(batch_processing_plugin PRIVATE
+        BRX_APP
+        _ACRXAPP
+        _FILE_OFFSET_BITS=64
+        _LARGE_FILES
+    )
+endif()
 
 # ============================================================================
 # CRITICAL: Force-include windows_fix.h for ALL compilations (including MOC)
@@ -235,11 +280,11 @@ if(MSVC)
         /wd4275
         /FI"${CMAKE_CURRENT_SOURCE_DIR}/src/windows_fix.h"
     )
-    
+
     set_target_properties(batch_processing_plugin PROPERTIES
         VS_PLATFORM_TOOLSET "v143"
     )
-    
+
     message(STATUS "")
     message(STATUS "🔧 ===============================================")
     message(STATUS "🔧 Qt 6.8+ Windows Header Fix ACTIVE")
@@ -247,6 +292,15 @@ if(MSVC)
     message(STATUS "🔧 Applies to: ALL files including MOC-generated")
     message(STATUS "🔧 ===============================================")
     message(STATUS "")
+elseif(NOT WIN32)
+    target_compile_options(batch_processing_plugin PRIVATE
+        -Wall
+        # Die BRX-Header loesen diese Warnungen in grosser Zahl aus
+        -Wno-unknown-pragmas
+        -Wno-unused-parameter
+        -Wno-unused-variable
+        -Wno-deprecated-declarations
+    )
 endif()
 
 # ============================================================================
@@ -259,31 +313,53 @@ endif()
 if(BRXATIL26_LIB)
     list(APPEND BRX_LIBRARIES ${BRXATIL26_LIB})
 endif()
+if(NOT WIN32)
+    list(APPEND BRX_LIBRARIES ${TD_ALLOC_LIB} ${TD_ROOT_LIB})
+endif()
 
 # Add BRX lib directory to linker search path (for #pragma comment(lib,...) in BRX headers)
 target_link_directories(batch_processing_plugin PRIVATE
     ${BRX_LIB_DIR}
 )
 
+if(NOT WIN32)
+    target_link_options(batch_processing_plugin PRIVATE
+        # Exporte des Einstiegspunkts (odrxCreateModuleObject ...) vollstaendig uebernehmen
+        "LINKER:--whole-archive,${DRX_ENTRYPOINT_LIB},--no-whole-archive"
+        # Fehlende Symbole beim Linken melden, nicht erst beim Laden in BricsCAD
+        "LINKER:--no-undefined"
+        # Abhaengigkeiten von libbrx26.so in der Installation aufloesen
+        "LINKER:-rpath-link,${BRX_LIB_DIR}"
+    )
+endif()
+
 target_link_libraries(batch_processing_plugin PRIVATE
     ${BRX_LIBRARIES}
     Qt6::Core
     Qt6::Widgets
 )
-
-# QuaZip linken (wenn verfuegbar)
-if(TARGET QuaZip::QuaZip)
-    target_link_libraries(batch_processing_plugin PRIVATE QuaZip::QuaZip)
-    target_compile_definitions(batch_processing_plugin PRIVATE HAS_QUAZIP=1)
-    message(STATUS "QuaZip linked")
+if(NOT WIN32)
+    target_link_libraries(batch_processing_plugin PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # ============================================================================
 # Output Configuration
 # ============================================================================
+# Windows: batchtool-<Version>.brx, Linux: batchtool-<Version>.lrx (Linux
+# Runtime eXtension). Die Version steht im Dateinamen, damit sich die
+# Staende auseinanderhalten lassen.
+if(WIN32)
+    set(_oc_module_suffix ".brx")
+    set(_oc_sample_dir "${CMAKE_CURRENT_SOURCE_DIR}/sample_project/00- BricsCAD Plugin/00- Windows Version")
+else()
+    set(_oc_module_suffix ".lrx")
+    set(_oc_sample_dir "${CMAKE_CURRENT_SOURCE_DIR}/sample_project/00- BricsCAD Plugin/01- Linux Version")
+endif()
+set(_oc_module_name "batchtool-${PROJECT_VERSION}")
+
 set_target_properties(batch_processing_plugin PROPERTIES
-    OUTPUT_NAME "batchtool"
-    SUFFIX ".brx"
+    OUTPUT_NAME "${_oc_module_name}"
+    SUFFIX "${_oc_module_suffix}"
     PREFIX ""
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
@@ -299,18 +375,24 @@ set_target_properties(batch_processing_plugin PROPERTIES
 # ============================================================================
 message(STATUS "")
 message(STATUS "🎯 ==========================================")
-message(STATUS "🎯 BricsCAD BatchProcessing Plugin - WINDOWS")
+message(STATUS "🎯 BricsCAD BatchProcessing Plugin - ${CMAKE_SYSTEM_NAME}")
 message(STATUS "🎯 ==========================================")
 message(STATUS "📦 Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "📁 Qt6: ${QT6_DIR}")
 message(STATUS "📁 BRX SDK: ${BRX_SDK_PATH}")
-message(STATUS "🎯 Output: batchtool.brx")
+message(STATUS "🎯 Output: ${_oc_module_name}${_oc_module_suffix}")
 message(STATUS "🎯 ==========================================")
 message(STATUS "")
 
-# Post-build message
+# Nach dem Bauen: die fertige Datei ins Beispielprojekt legen. Aeltere
+# Staende dort werden entfernt, damit immer genau eine Version dort liegt.
 add_custom_command(TARGET batch_processing_plugin POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "🎉 Build complete: batchtool.brx"
-    COMMAND ${CMAKE_COMMAND} -E echo "🔧 Load with: APPLOAD in BricsCAD V26"
-    COMMAND ${CMAKE_COMMAND} -E echo "✅ Windows MSVC 2022 Build - Qt 6.8+ compatible"
+    COMMAND ${CMAKE_COMMAND}
+        -DOC_MODULE=$<TARGET_FILE:batch_processing_plugin>
+        -DOC_SAMPLE_DIR=${_oc_sample_dir}
+        -DOC_SUFFIX=${_oc_module_suffix}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/copy_to_sample_project.cmake"
+    COMMAND ${CMAKE_COMMAND} -E echo "Build complete: ${_oc_module_name}${_oc_module_suffix}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Load with: APPLOAD in BricsCAD V26"
+    VERBATIM
 )
