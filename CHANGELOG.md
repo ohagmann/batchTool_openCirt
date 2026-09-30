@@ -9,7 +9,7 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 
 ### Added
 - **Beispiel-Erstellliste im Beispielprojekt:** `01- Referenzen/Erstellliste_VORLAGE.csv` mit allen 38 Spalten der Erstellliste (UTF-8 mit BOM, Semikolon) und fünf Beispielzeilen, die Projektzeile, Anlagenzeile mit Meldungsgruppe, Meldungszeile und einfache Anlagenzeilen zeigen. „Projekt aufbauen" erzeugt daraus vier Blätter aus den Vorlagen des Beispielprojekts (geprüft: Vorschau und Lauf ohne Warnung, anschließender Gesamtlauf mit 10 Deckblättern). Beschrieben in der Bedienungsanleitung, Abschnitt 3.3.
-- **Vorlagen des Beispielprojekts:** `OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg` und `OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg` auf den Stand aus HTW HIT vom 24.09.2026 gebracht (Blöcke, Attribute und Lagen unverändert gegenüber dem Stand vom 23.09.; geprüft mit Aufbau, Gesamtlauf und PDF mit Inhaltsverzeichnis).
+- **Vorlagen des Beispielprojekts:** `OC_VORLAGE_DIN_A2_HISTORIE_V1.dwg` und `OC_VORLAGE_DIN_A2_INHALTSVERZEICHNIS_V1.dwg` auf den Vorlagenstand vom 24.09.2026 gebracht (Blöcke, Attribute und Lagen unverändert gegenüber dem Stand vom 23.09.; geprüft mit Aufbau, Gesamtlauf und PDF mit Inhaltsverzeichnis).
 
 ### Changed
 - **Der Dateiname trägt die Version.** Der Build erzeugt `batchtool-<Version>.brx` bzw. `batchtool-<Version>.lrx` (z.B. `batchtool-1.7.1.lrx`) statt `batchtool.brx`/`batchtool.lrx`, damit sich die Stände auseinanderhalten lassen. Die fertige Datei wird zusätzlich ins Beispielprojekt gelegt (`00- BricsCAD Plugin/00- Windows Version/` bzw. `01- Linux Version/`), ältere Stände dort werden entfernt. Wer das Plugin über die Startup Suite lädt, stellt den Eintrag nach einem Versionswechsel auf die neue Datei um.
