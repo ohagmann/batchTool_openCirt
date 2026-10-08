@@ -161,6 +161,9 @@ private slots:
     void onSensorListeGenerate();
     void onDatenpunktExport();
 
+    /// Dialog "BAS konfigurieren": Aufbau des BAS bearbeiten, BAS.csv schreiben
+    void onBasKonfigurieren();
+
 private:
     void setupUi();
     void updateButtonStates();
@@ -243,8 +246,21 @@ private:
     /// Plankopf master data but are not source drawings
     QStringList findProjektblaetter();
     
-    /// Detect ASP from folder path (looks for "ASP" or "ISP" in folder name)
+    /// Ordnerebenen unter dem Zeichnungsordner, so wie "Projekt aufbauen"
+    /// sie anlegt: [0] Los, [1] ASP, [2] Gewerk, [3] Anlage. Welche Ebene ein
+    /// Ordner ist, bestimmt seine Lage, nicht sein Name - die Namen vergibt
+    /// der Planer in der Erstellliste. Liefert die Ordnernamen (mit dem
+    /// NN-Praefix) von oben nach unten; leer, wenn der Ordner nicht unter dem
+    /// Zeichnungsordner liegt.
+    QStringList hierarchieLevels(const QString& folderPath) const;
+
+    /// Ordnername der ASP-Ebene (mit NN-Praefix) zu einer Zeichnung; leer
+    /// oberhalb der ASP-Ebene
     QString detectAspFromPath(const QString& dwgPath);
+
+    /// Absoluter Pfad des ASP-Ordners zu einem Ordner darunter; leer
+    /// oberhalb der ASP-Ebene
+    QString aspFolderPathOf(const QString& folderPath) const;
     
     /// Convert ODS to CSV using LibreOffice or Excel
     bool convertOdsToCSV(const QString& odsPath, const QString& csvPath);
@@ -429,6 +445,7 @@ private:
     QPushButton* m_btnSensorliste;
     QPushButton* m_btnDpExport;
     QPushButton* m_btnBereinigen;
+    QPushButton* m_btnBasConfig = nullptr;   ///< "BAS konfigurieren"
     
     QCheckBox* m_chkIncludeBmk;
     QCheckBox* m_chkIncludeBas;

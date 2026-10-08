@@ -23,6 +23,7 @@
 
 #include "OpenCirtTab.h"
 #include "Theming.h"
+#include "BasConfigDialog.h"
 #include "../utils/SensorKeywordLoader.h"
 #include "../utils/CsvListWriter.h"
 #include "../core/ProjectBuilder.h"
@@ -416,7 +417,22 @@ void OpenCirtTab::setupUi() {
     m_chkIncludeBas->setToolTip(
         "BAS-Generierung vor GA-FL-Generierung ausfuehren.\n"
         "Setzt korrekte BMK-Nummerierung voraus.");
-    addOptionRow(m_chkIncludeBas);
+    {
+        // Haken und daneben der Knopf, der den Aufbau des BAS bearbeitet
+        auto* rowLayout = new QHBoxLayout();
+        rowLayout->addSpacing(220 + rowLayout->spacing());
+        rowLayout->addWidget(m_chkIncludeBas);
+        rowLayout->addSpacing(16);
+        m_btnBasConfig = new QPushButton("BAS konfigurieren");
+        m_btnBasConfig->setMinimumHeight(32);   // wie die Knoepfe links, nicht gedrungen
+        m_btnBasConfig->setMinimumWidth(180);
+        m_btnBasConfig->setToolTip(
+            "Aufbau des BAS als Tabelle bearbeiten (Text / Attribut) und als\n"
+            "01- Referenzen/BAS.csv im richtigen Format speichern.");
+        rowLayout->addWidget(m_btnBasConfig);
+        rowLayout->addStretch();
+        buttonLayout->addLayout(rowLayout);
+    }
 
     addSeparator();
 
@@ -463,6 +479,7 @@ void OpenCirtTab::setupUi() {
     connect(m_btnPublish, &QPushButton::clicked, this, &OpenCirtTab::onPublishPdf);
     connect(m_btnSensorliste, &QPushButton::clicked, this, &OpenCirtTab::onSensorListeGenerate);
     connect(m_btnDpExport, &QPushButton::clicked, this, &OpenCirtTab::onDatenpunktExport);
+    connect(m_btnBasConfig, &QPushButton::clicked, this, &OpenCirtTab::onBasKonfigurieren);
     connect(m_btnBereinigen, &QPushButton::clicked, this, &OpenCirtTab::onProjektBereinigen);
     connect(m_btnProjektAufbau, &QPushButton::clicked, this, &OpenCirtTab::onProjektAufbauen);
 }
@@ -479,6 +496,7 @@ void OpenCirtTab::onEnableToggled(bool enabled) {
     m_btnBereinigen->setEnabled(usable);
     m_chkIncludeBmk->setEnabled(usable);
     m_chkIncludeBas->setEnabled(usable);
+    m_btnBasConfig->setEnabled(usable);
     
     if (enabled && !m_projectRoot.isEmpty()) {
         m_statusLabel->setText("Bereit");
@@ -703,6 +721,7 @@ void OpenCirtTab::updateButtonStates() {
     m_btnDpExport->setEnabled(enabled);
     m_btnFullProject->setEnabled(enabled);
     m_btnBereinigen->setEnabled(enabled);
+    m_btnBasConfig->setEnabled(enabled);
 }
 
 bool OpenCirtTab::isEnabled() const {
@@ -864,21 +883,44 @@ QStringList OpenCirtTab::findProjektblaetter() {
     return result;
 }
 
-QString OpenCirtTab::detectAspFromPath(const QString& dwgPath) {
-    // Walk up the folder hierarchy to find a folder containing "ASP" or "ISP"
-    QDir dir(QFileInfo(dwgPath).absolutePath());
-    QString drawingsRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    
-    while (dir.absolutePath().length() > drawingsRoot.length()) {
-        QString dirName = dir.dirName();
-        if (dirName.contains("ASP", Qt::CaseInsensitive) ||
-            dirName.contains("ISP", Qt::CaseInsensitive)) {
-            return dirName;
-        }
-        dir.cdUp();
+namespace {
+// Ordnerebenen unter '05- Projekt Zeichnungen', wie "Projekt aufbauen" sie anlegt
+enum HierarchieEbene { EbeneLos = 0, EbeneAsp = 1, EbeneGewerk = 2, EbeneAnlage = 3 };
+}
+
+QStringList OpenCirtTab::hierarchieLevels(const QString& folderPath) const {
+    // Welche Ebene ein Ordner ist, bestimmt seine Lage unter dem
+    // Zeichnungsordner, nicht sein Name: "Projekt aufbauen" legt die Ordner in
+    // der Reihenfolge Los / ASP / Gewerk / Anlage an, die Namen kommen aus der
+    // Erstellliste und werden so uebernommen, wie der Planer sie dort
+    // eingetragen hat. Bis 1.7.1 galt nur ein Ordner als ASP-Ebene, dessen
+    // Name "ASP" oder "ISP" enthielt; eine Kennung wie "MUEK01" blieb damit
+    // ohne ASP im Plankopf und in den Listen.
+    QString root = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
+    root.replace("\\", "/");
+    QString folder = folderPath;
+    folder.replace("\\", "/");
+
+    const QString rel = QDir(root).relativeFilePath(folder);
+    if (rel.isEmpty() || rel == "." || rel == ".." || rel.startsWith("../")
+        || QDir::isAbsolutePath(rel)) {
+        return QStringList();   // nicht unter dem Zeichnungsordner
     }
-    
-    return QString(); // No ASP found
+    QStringList parts = rel.split('/', Qt::SkipEmptyParts);
+    parts.removeAll(".");
+    return parts;
+}
+
+QString OpenCirtTab::detectAspFromPath(const QString& dwgPath) {
+    const QStringList levels = hierarchieLevels(QFileInfo(dwgPath).absolutePath());
+    return levels.size() > EbeneAsp ? levels.at(EbeneAsp) : QString();
+}
+
+QString OpenCirtTab::aspFolderPathOf(const QString& folderPath) const {
+    const QStringList levels = hierarchieLevels(folderPath);
+    if (levels.size() <= EbeneAsp) return QString();
+    return QDir(projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR) + "/"
+                + levels.at(EbeneLos) + "/" + levels.at(EbeneAsp)).absolutePath();
 }
 
 bool OpenCirtTab::isActiveValue(const QString& value) {
@@ -1263,6 +1305,18 @@ void OpenCirtTab::onFullProjectGenerate() {
     }
 }
 
+void OpenCirtTab::onBasKonfigurieren() {
+    if (m_projectRoot.isEmpty()) return;
+    const QString basPath = referencePath(OpenCirtConfig::BAS_CSV);
+    BasConfigDialog dlg(basPath, this);
+    log("BAS konfigurieren: " + QString(dlg.status()).replace('\n', ' '));
+    if (dlg.exec() != QDialog::Accepted) return;
+    const QVector<OcBasSegment> segs = dlg.segments();
+    log(QString("BAS.csv gespeichert: %1 Segmente, Aufbau: %2")
+        .arg(segs.size()).arg(OcEngine::basLayoutText(segs)));
+    log("Datei: " + basPath + " (bisherige Fassung als BAS.csv.bak)");
+}
+
 QString OpenCirtTab::projectExtractDir(const QString& purpose) const {
     // Die Kennung entsteht aus dem vollen Pfad: gleichnamige Projekte an
     // verschiedenen Orten bekommen verschiedene Ordner
@@ -1453,7 +1507,8 @@ bool OpenCirtTab::runGesamtlauf(const QStringList& dwgFiles, RunCounts& counts) 
             logError("BAS.csv enthaelt keine Segmente - BAS-Generierung uebersprungen");
             doBas = false;
         } else {
-            log(QString("BAS.csv geladen: %1 Segmente").arg(basSegments.size()));
+            log(QString("BAS.csv geladen: %1 Segmente, Aufbau: %2")
+                .arg(basSegments.size()).arg(OcEngine::basLayoutText(basSegments)));
         }
     } else {
         log("BAS-Generierung uebersprungen (deaktiviert)");
@@ -2895,36 +2950,11 @@ void OpenCirtTab::createDeckblaetter(RunCounts& counts) {
 
 void OpenCirtTab::deriveHierarchieFromFolder(const QString& folderPath,
                                              QString& asp, QString& gewerk, QString& anlage) {
-    asp.clear();
-    gewerk.clear();
-    anlage.clear();
-
-    QString drawingsDir = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-    drawingsDir.replace("\\", "/");
-
-    // ASP-Ordner nach oben suchen
-    QDir aspSearch(folderPath);
-    QString aspFolderPath;
-    while (aspSearch.absolutePath().length() > drawingsDir.length()) {
-        QString dn = aspSearch.dirName();
-        if (dn.contains("ASP", Qt::CaseInsensitive) ||
-            dn.contains("ISP", Qt::CaseInsensitive)) {
-            asp = folderDisplayName(dn);
-            aspFolderPath = aspSearch.absolutePath();
-            break;
-        }
-        aspSearch.cdUp();
-    }
-
-    if (aspFolderPath.isEmpty()) return;  // oberhalb der ASP-Ebene (z.B. Los)
-
-    // Pfadanteile unterhalb des ASP-Ordners: [0] = Gewerk, [1] = Anlage
-    QString relPath = QDir(aspFolderPath).relativeFilePath(folderPath);
-    QStringList parts = relPath.split("/", Qt::SkipEmptyParts);
-    parts.removeAll(".");
-
-    if (parts.size() >= 1) gewerk = folderDisplayName(parts[0]);
-    if (parts.size() >= 2) anlage = folderDisplayName(parts[1]);
+    // Ebenen nach ihrer Lage im Pfad; Los-Ordner oder hoeher: alle drei leer
+    const QStringList levels = hierarchieLevels(folderPath);
+    asp    = levels.size() > EbeneAsp    ? folderDisplayName(levels.at(EbeneAsp))    : QString();
+    gewerk = levels.size() > EbeneGewerk ? folderDisplayName(levels.at(EbeneGewerk)) : QString();
+    anlage = levels.size() > EbeneAnlage ? folderDisplayName(levels.at(EbeneAnlage)) : QString();
 }
 
 void OpenCirtTab::loadPlankopfCsv() {
@@ -3412,21 +3442,12 @@ void OpenCirtTab::planSummarySheets(const QVector<SourceDrawingInfo>& drawings) 
         // Step 1.5: Gewerk-Summe (one row per Anlage within each Gewerk)
         // ================================================================
         {
-            // Find ASP folder path for Gewerk folder resolution
+            // ASP-Ordner (Lage im Pfad) fuer die Suche nach dem Gewerk-Ordner
             QString aspFolderPath;
             if (!aspDrawings.isEmpty()) {
-                QDir aspSearch(aspDrawings.first()->aspFolder);
-                QString drRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-                while (aspSearch.absolutePath().length() > drRoot.length()) {
-                    if (aspSearch.dirName().contains("ASP", Qt::CaseInsensitive) ||
-                        aspSearch.dirName().contains("ISP", Qt::CaseInsensitive)) {
-                        aspFolderPath = aspSearch.absolutePath();
-                        break;
-                    }
-                    aspSearch.cdUp();
-                }
+                aspFolderPath = aspFolderPathOf(aspDrawings.first()->aspFolder);
             }
-            
+
             for (auto gwIt = gewerkMap.constBegin(); gwIt != gewerkMap.constEnd(); ++gwIt) {
                 QString gewerkName = gwIt.key();
                 const QVector<const SourceDrawingInfo*>& gwDrawings = gwIt.value();
@@ -3614,25 +3635,16 @@ void OpenCirtTab::planSummarySheets(const QVector<SourceDrawingInfo>& drawings) 
         aspCsvFile.close();
         log(QString("ASP-Summe CSV %1: %2 Gewerke").arg(aspName).arg(gewerkCount));
         
-        // Determine ASP summary folder
+        // Ordner der ASP-Summe: der ASP-Ordner (Lage im Pfad), sonst der Zeichnungsordner
         QString aspFolder;
         if (!aspDrawings.isEmpty()) {
-            QDir dir(aspDrawings.first()->aspFolder);
-            QString drawingsRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
-            while (dir.absolutePath().length() > drawingsRoot.length()) {
-                if (dir.dirName().contains("ASP", Qt::CaseInsensitive) ||
-                    dir.dirName().contains("ISP", Qt::CaseInsensitive)) {
-                    aspFolder = dir.absolutePath();
-                    break;
-                }
-                dir.cdUp();
-            }
+            aspFolder = aspFolderPathOf(aspDrawings.first()->aspFolder);
         }
         if (aspFolder.isEmpty()) {
             aspFolder = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
         }
         aspFolder.replace("\\", "/");
-        
+
         // Generate SCR for ASP summary sheets (based on Gewerk count)
         int aspSheetCount = calculateSheetCount(gewerkCount);
         int dpOffset = 0;
@@ -3674,30 +3686,18 @@ void OpenCirtTab::planSummarySheets(const QVector<SourceDrawingInfo>& drawings) 
         const QVector<const SourceDrawingInfo*>& aspDrawings = it.value();
         if (aspDrawings.isEmpty()) continue;
         
-        // Find ASP folder, then go one level up for Los
-        QDir dir(aspDrawings.first()->aspFolder);
-        while (dir.absolutePath().length() > drawingsRootLos.length()) {
-            if (dir.dirName().contains("ASP", Qt::CaseInsensitive) ||
-                dir.dirName().contains("ISP", Qt::CaseInsensitive)) {
-                break;
-            }
-            dir.cdUp();
-        }
-        
-        // dir is now at ASP level, go up one more for Los
-        QDir losDir(dir);
-        losDir.cdUp();
-        QString losFolder = losDir.absolutePath();
-        
-        // Only if Los folder is between drawings root and ASP
-        if (losFolder.length() > drawingsRootLos.length()) {
-            losAspMap[losFolder].append(aspName);
-            if (!losFolderNames.contains(losFolder)) {
-                losFolderNames[losFolder] = folderDisplayName(losDir.dirName());
-            }
+        // Los-Ordner = Ebene ueber dem ASP-Ordner (Lage im Pfad); Zeichnungen
+        // oberhalb der ASP-Ebene gehoeren zu keinem Los
+        const QStringList levels = hierarchieLevels(aspDrawings.first()->aspFolder);
+        if (levels.size() <= EbeneAsp) continue;
+        const QString losFolder =
+            QDir(drawingsRootLos + "/" + levels.at(EbeneLos)).absolutePath();
+        losAspMap[losFolder].append(aspName);
+        if (!losFolderNames.contains(losFolder)) {
+            losFolderNames[losFolder] = folderDisplayName(levels.at(EbeneLos));
         }
     }
-    
+
     int losSumSheetTotal = 0;
     
     for (auto losIt = losAspMap.constBegin(); losIt != losAspMap.constEnd(); ++losIt) {
@@ -4086,34 +4086,17 @@ void OpenCirtTab::planSummarySheets(const QVector<SourceDrawingInfo>& drawings) 
 static QString readZeichnungsnummer(const QString& dwgPath);
 
 void OpenCirtTab::applyFolderHierarchie(SourceDrawingInfo& info, const QString& dwgPath) {
-    info.aspName = detectAspFromPath(dwgPath);
-    info.aspFolder = QFileInfo(dwgPath).absolutePath();
-    info.gewerk.clear();
-    info.anlage.clear();
+    // Struktur: Los / ASP / Gewerk / Anlage / *.dwg - die Ebenen nach ihrer Lage
+    const QString dwgParent = QFileInfo(dwgPath).absolutePath();
+    const QStringList levels = hierarchieLevels(dwgParent);
 
-    // Struktur: ASP / Gewerk / Anlage / *.dwg
-    QString dwgParent = QFileInfo(dwgPath).absolutePath();
-    QString drawingsRoot = projectPath(OpenCirtConfig::ZEICHNUNGEN_DIR);
+    info.aspName   = levels.size() > EbeneAsp    ? levels.at(EbeneAsp) : QString();
+    info.aspFolder = dwgParent;
+    info.gewerk    = levels.size() > EbeneGewerk ? folderDisplayName(levels.at(EbeneGewerk)) : QString();
+    info.anlage    = levels.size() > EbeneAnlage ? folderDisplayName(levels.at(EbeneAnlage)) : QString();
 
-    QDir aspSearchDir(dwgParent);
-    QString aspFolderPath;
-    while (aspSearchDir.absolutePath().length() > drawingsRoot.length()) {
-        if (aspSearchDir.dirName().contains("ASP", Qt::CaseInsensitive) ||
-            aspSearchDir.dirName().contains("ISP", Qt::CaseInsensitive)) {
-            aspFolderPath = aspSearchDir.absolutePath();
-            break;
-        }
-        aspSearchDir.cdUp();
-    }
-
-    if (!aspFolderPath.isEmpty()) {
-        QString relPath = QDir(aspFolderPath).relativeFilePath(dwgParent);
-        QStringList pathParts = relPath.split("/", Qt::SkipEmptyParts);
-        pathParts.removeAll(".");
-        if (pathParts.size() >= 1) info.gewerk = folderDisplayName(pathParts[0]);
-        if (pathParts.size() >= 2) info.anlage = folderDisplayName(pathParts[1]);
-    } else {
-        // Fallback: Elternordner als Gewerk
+    if (info.aspName.isEmpty()) {
+        // Oberhalb der ASP-Ebene: Elternordner als Gewerk (wie bisher)
         info.gewerk = folderDisplayName(QDir(dwgParent).dirName());
     }
 }

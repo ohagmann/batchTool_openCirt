@@ -164,6 +164,17 @@ QVector<QStringList> readReferenceCsv(const QString& path, bool* ok = nullptr);
 /// BAS.csv lesen (oc-parse-bas-csv). ok = false, wenn die Datei fehlt.
 QVector<OcBasSegment> parseBasCsv(const QString& path, bool* ok = nullptr);
 
+/// BAS-Aufbau als Text fuers Protokoll: Text in Anfuehrungszeichen, Attribute
+/// ohne, Attribute je Datenpunkt mit "_n"; Segmente durch " + " getrennt
+QString basLayoutText(const QVector<OcBasSegment>& segments);
+
+/// Schreibt die BAS.csv so, wie parseBasCsv sie liest: Text als """Text"""
+/// (uebersteht Oeffnen und Speichern in Calc), das Trennzeichen "-" und
+/// Attributnamen ohne Anfuehrungszeichen. Eine vorhandene Datei wird vorher
+/// als BAS.csv.bak gesichert.
+bool writeBasCsv(const QString& path, const QVector<OcBasSegment>& segments,
+                 QString* error = nullptr);
+
 /// Neuen Lauf beginnen: jede Zeichnung bekommt beim ersten Speichern wieder
 /// eine Sicherungskopie (*.bak). Weitere Speichervorgaenge desselben Laufs
 /// lassen sie stehen, sie zeigt also den Stand vor dem Lauf.

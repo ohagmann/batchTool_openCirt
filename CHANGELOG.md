@@ -5,6 +5,41 @@ Alle wesentlichen Änderungen am Batchtool / openCirt Plugin werden in dieser Da
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei reinen Änderungen an Vorlagen, LISP-Skripten, Dokumentation oder Repo-Konfiguration.
 
+## [1.7.3] - 2026-10-08
+
+### Added
+- **„BAS konfigurieren".** Neuer Knopf im openCirt-Tab neben „BAS-Generierung einschliessen". Er zeigt die Segmente der BAS.csv als Tabelle mit Art (Text / Attribut) und Wert. Zeilen lassen sich als Attribut, Text oder Trennzeichen anfügen, entfernen und nach oben oder unten schieben; die Vorschau zeigt den Aufbau mit `<NAME>` für Attribute und `<NAME_n>` für Attribute je Datenpunkt, darunter stehen Beispiele für Text- und Attributzeilen. „Speichern" schreibt die BAS.csv im Format des Plugins (Text als `"""Text"""`, Trennzeichen `-`, Attributnamen ohne Anführungszeichen) und sichert die bisherige Datei als `BAS.csv.bak`; der Aufbau steht danach im Protokoll. Der Dialog zeigt oben, welche Datei er gelesen hat und wie viele Segmente; fehlt die BAS.csv, legt er sie mit dem üblichen Aufbau an und meldet das. Beides steht auch im Protokoll. Die Datei bleibt eine schlichte CSV und lässt sich weiter von Hand oder per Skript pflegen; Kommentare hinter dem Semikolon gehen beim Speichern aus dem Dialog verloren.
+
+### Changed
+- Die Rückfrage „BAS.csv pruefen" aus 1.7.2 entfällt, der Dialog macht sie überflüssig. Die Protokollzeile „BAS.csv geladen: N Segmente, Aufbau: …" bleibt.
+
+### Fixed
+- **Beschreibungen neben den Knöpfen unter Linux lesbar.** Ein Stylesheet mit Farbe schreibt seine Farbe in die Palette des Widgets zurück; die gedämpfte Farbe wurde bei jedem Anwenden des Themas aus der schon gedämpften Farbe neu gemischt. Unter Linux begann das bei der hellen Standardpalette eines noch elternlosen Labels, im dunklen Thema blieb davon fast nichts übrig. Die Farben werden jetzt aus der Palette des Fensters gerechnet.
+
+### Geprüft (Linux)
+- „BAS konfigurieren" mit der BAS.csv des Kollegen (alle Zeilen in Anführungszeichen): der Dialog zeigt 13 Zeilen der Art Text, Vorschau `DE-10789-ORTSKENNZEICHEN-GEWERK-…`; nach Umstellen der sechs Namen auf Attribut lautet die Vorschau `DE-10789-<ORTSKENNZEICHEN>-<GEWERK>-<ANLAGE>-<OC_AKS>-<OC_FCODE_DP_n>-<ASP>`, die gespeicherte Datei ist byteidentisch mit einer von Hand richtig geschriebenen BAS.csv, die bisherige liegt als `BAS.csv.bak`.
+- Beispielprojekt: Laden, Trennzeichen anfügen, nach oben, nach unten, entfernen, speichern ergibt die Datei im Format des Plugins mit unverändertem Aufbau; anschließender Gesamtlauf ohne Rückfrage, Ergebnis attributgleich mit 1.7.2 (17 Blätter, 9.092 Attribute).
+- Beschreibungen neben den Knöpfen im dunklen Thema per Bildschirmfoto geprüft: vorher kaum vom Hintergrund zu unterscheiden, jetzt lesbar.
+- Projekt ohne BAS.csv: Meldung „BAS.csv fehlte und wurde mit dem ueblichen Aufbau angelegt" mit Pfad, die Datei liegt danach mit dem üblichen Aufbau in `01- Referenzen`. Projekt mit BAS.csv: Statuszeile „BAS.csv gelesen, 13 Segmente" mit Pfad, alle Zeilen in der Tabelle, keine Meldung. Beides auch als Protokollzeile.
+- Windows-Build steht aus.
+
+## [1.7.2] - 2026-10-07
+
+### Added
+- **Das Protokoll zeigt den BAS-Aufbau.** Beim Laden der BAS.csv steht im Protokoll, wie der BAS zusammengesetzt wird, z.B. `"DE-10789" + "-" + ORTSKENNZEICHEN + "-" + GEWERK + … + OC_FCODE_DP_n + "-" + ASP`: Text in Anführungszeichen, Attribute ohne, Attribute je Datenpunkt mit `_n`.
+- **Rückfrage bei Anführungszeichen um Attributnamen.** Stehen in der BAS.csv Zeilen wie `"ASP"` oder `"OC_AKS"` in Anführungszeichen, nimmt das Plugin sie wörtlich; der BAS lautet dann `DE-10789-ORTSKENNZEICHEN-GEWERK-…`. So speichern Calc und Excel die Datei mit „alle Textzellen in Anführungszeichen", und in der Tabellenkalkulation ist das nicht zu sehen. „Projekt erstellen" zeigt die betroffenen Zeilen jetzt vor der Sicherheitsabfrage an, mit „Abbrechen" (Vorgabe) und „Trotzdem fortfahren"; beim Abbruch bleibt das Projekt unverändert. Ein Kürzel wie `"GEB1"` löst keine Rückfrage aus. Anlass: eine so gespeicherte BAS.csv bei einem Kollegen (2026-10-07), die zunächst wie ein Fehler der neuen Version aussah.
+
+### Fixed
+- **Die ASP-Kennung darf beliebig heißen.** Bis 1.7.1 galt ein Ordner nur dann als ASP-Ebene, wenn sein Name „ASP" oder „ISP" enthielt. Stand in der Erstellliste eine Kennung wie `MÜK01`, legte „Projekt aufbauen" zwar den Ordner `00 MÜK01` an, der Gesamtlauf fand darunter aber keine ASP-Ebene: ASP, GEWERK und ANLAGE blieben im Plankopf leer, Datenpunktliste und IO-Belegungsliste führten die Blätter unter „(ohne ASP)", die Sensorliste ohne ASP, die BAS-Adressen entstanden ohne die Segmente ASP, Gewerk und Anlage (`Testprojekt-----ZUV-01-FG_01` statt `Testprojekt-MÜK01-GA-SSK-1000--ZUV-01-FG_01`), und die Summenblätter warfen die Blätter aller solcher Ordner in einen Topf (keine Los-Summe, keine Gewerke-Summe je Los, ASP-Summe als `_default`). Jetzt bestimmt die Lage im Pfad die Ebene, so wie „Projekt aufbauen" die Ordner anlegt: `05- Projekt Zeichnungen/<Los>/<ASP>/<Gewerk>/<Anlage>`. Die Namen vergibt der Planer in der Erstellliste, das Plugin übernimmt sie, wie sie dort stehen. Das Inhaltsverzeichnis arbeitete schon so.
+- Folge für bestehende Projekte: Blätter unter einer ASP-Ebene, deren Name bisher nicht erkannt wurde (z.B. `00 Los 00/00 Übersicht/00 GA/00 Topologie`), bekommen beim nächsten Gesamtlauf ASP, GEWERK und ANLAGE aus ihren Ordnern in den Plankopf (`Übersicht`, `GA`, `Topologie`), ebenso ihre Deckblätter. Bisher blieben diese Felder dort leer.
+
+### Geprüft (Linux)
+- Beispielprojekt mit Erstellliste, in der `ASP01` durch `MÜK01` ersetzt ist: „Projekt aufbauen" legt `00 Los 1/00 MÜK01/…` an, der Gesamtlauf schreibt `MÜK01` als ASP in Quellblätter und Deckblätter.
+- Beispielprojekt mit umbenanntem Ordner `01 MÜK01`, Gesamtlauf und IO-Liste: mit 1.7.1 alle 36 Zeilen „(ohne ASP)", BAS ohne ASP/Gewerk/Anlage, 2 Summenblätter; mit 1.7.2 alle Zeilen `MÜK01`, BAS vollständig, 4 Summenblätter. Gegen den Lauf mit `01 ASP01` ist das Ergebnis bis auf den Namen gleich (17 Blätter, 9.092 Attribute; nur die mittig gesetzte Überschrift des ASP-Deckblatts liegt wegen der anderen Textbreite anders).
+- Edeka BLV (138 Blätter, 115.387 Attribute), 1.7.1 gegen 1.7.2: gleich bis auf die drei Quellblätter und drei Deckblätter unter `00 Los 00/00 Übersicht/00 GA/00 482.00.01`, die jetzt ASP `Übersicht`, GEWERK `GA` und ANLAGE `482.00.01` tragen (Protokoll: „52 von 52" statt „49 von 52 Dateien erhalten ASP/GEWERK/ANLAGE aus Ordnerhierarchie").
+- BAS.csv-Rückfrage: mit der BAS.csv des Kollegen (alle Zeilen in Anführungszeichen) erscheint vor der Sicherheitsabfrage der Dialog „BAS.csv pruefen" mit den sechs betroffenen Zeilen; „Abbrechen" lässt den Zeichnungsordner unverändert (Prüfsummen gleich), „Trotzdem fortfahren" läuft wie bisher durch (BAS `DE-10789-ORTSKENNZEICHEN-GEWERK-ANLAGE-OC_AKS-OC_FCODE_DP-ASP`, Aufbau und Warnung im Protokoll). Beispielprojekt unverändert und mit Kürzel `"GEB1"`: kein Dialog, Protokollzeile „BAS.csv geladen: 13 Segmente, Aufbau: …", Ergebnis attributgleich mit dem Lauf ohne die Prüfung (17 Blätter, 9.092 Attribute).
+- Windows-Build steht aus.
+
 ## [1.7.1] - 2026-09-30
 
 ### Added

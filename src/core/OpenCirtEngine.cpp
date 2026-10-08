@@ -26,7 +26,9 @@
 #include "TextAlignment.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStringDecoder>
 
@@ -648,6 +650,59 @@ QVector<OcBasSegment> parseBasCsv(const QString& path, bool* ok)
         segments.append(seg);
     }
     return segments;
+}
+
+QString basLayoutText(const QVector<OcBasSegment>& segments)
+{
+    QStringList parts;
+    for (const OcBasSegment& seg : segments) {
+        switch (seg.type) {
+        case OcBasSegment::Static:
+            parts << QLatin1Char('"') + seg.value + QLatin1Char('"');
+            break;
+        case OcBasSegment::AttrDp:
+            parts << seg.value + QStringLiteral("_n");
+            break;
+        default:
+            parts << seg.value;
+            break;
+        }
+    }
+    return parts.join(QStringLiteral(" + "));
+}
+
+bool writeBasCsv(const QString& path, const QVector<OcBasSegment>& segments, QString* error)
+{
+    QString text;
+    for (const OcBasSegment& seg : segments) {
+        if (seg.type == OcBasSegment::Static && seg.value != QLatin1String("-")) {
+            text += QStringLiteral("\"\"\"") + seg.value + QStringLiteral("\"\"\"\n");
+        } else {
+            text += seg.value + QLatin1Char('\n');
+        }
+    }
+
+    if (QFileInfo::exists(path)) {
+        const QString bak = path + QStringLiteral(".bak");
+        QFile::remove(bak);
+        if (!QFile::copy(path, bak)) {
+            if (error) *error = QStringLiteral("Sicherung nicht moeglich: ") + bak;
+            return false;
+        }
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    const QByteArray bytes = text.toUtf8();
+    if (f.write(bytes) != bytes.size()) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    f.close();
+    return true;
 }
 
 } // namespace OcEngine

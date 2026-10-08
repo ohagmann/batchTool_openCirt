@@ -118,7 +118,16 @@ QPalette buildPalette(bool dark)
 
 static QPalette paletteOf(const QWidget* w)
 {
-    if (w) return w->palette();
+    // Die Palette des Fensters, nicht die des Widgets: Ein Stylesheet mit
+    // "color:" schreibt seine Farbe in die Palette des Widgets zurueck. Wer
+    // daraus erneut eine gedaempfte Farbe mischt, daempft bei jedem apply()
+    // weiter. Unter Linux begann das bei der hellen Standardpalette eines noch
+    // elternlosen Labels, danach waren die Beschreibungen neben den Knoepfen
+    // im dunklen Thema nicht mehr lesbar.
+    if (w) {
+        const QWidget* top = w->window();
+        return (top && top != w) ? top->palette() : w->palette();
+    }
     if (qApp) return qApp->palette();
     return QPalette();
 }

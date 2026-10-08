@@ -180,6 +180,7 @@ set(PLUGIN_SOURCES
     src/data/ProcessingOptionsImpl.cpp
     src/ui/MainWindow.cpp
     src/ui/OpenCirtTab.cpp
+    src/ui/BasConfigDialog.cpp
     src/ui/Theming.cpp
     src/ui/widgets/AcadColorGrid.cpp
     src/utils/SensorKeywordLoader.cpp
@@ -195,6 +196,7 @@ set(PLUGIN_HEADERS
     src/data/ProcessingOptions.h
     src/ui/MainWindow.h
     src/ui/OpenCirtTab.h
+    src/ui/BasConfigDialog.h
     src/ui/Theming.h
     src/ui/widgets/AcadColorGrid.h
     src/utils/SensorKeywordLoader.h

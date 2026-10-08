@@ -112,7 +112,7 @@ Projektname/
 
 ### 3.2 Ordnerhierarchie der Zeichnungen
 
-Die Ordnerstruktur unter `05- Projekt Zeichnungen/` folgt der GA-Hierarchie:
+Die Ordnerstruktur unter `05- Projekt Zeichnungen/` folgt der GA-Hierarchie: Welche Ebene ein Ordner ist, ergibt sich aus seiner Lage; die Namen vergibt die Erstellliste, „ASP01" ist nur ein Beispiel.
 
 ```
 Los → ASP → Gewerk → Anlage
@@ -294,7 +294,7 @@ ERSTELLDATUM;01.04.2026;Erstelldatum
 
 Der Schritt ist Teil von **„Projekt erstellen"** (Abschnitt 11): Die Werte der CSV werden in die Plankopf-Attribute aller Zeichnungen geschrieben.
 
-Zusätzlich werden automatisch aus dem Ordnerpfad die Attribute **ASP**, **GEWERK** und **ANLAGE** im Plankopf gesetzt.
+Zusätzlich werden automatisch aus dem Ordnerpfad die Attribute **ASP**, **GEWERK** und **ANLAGE** im Plankopf gesetzt. Maßgeblich ist die Lage im Pfad (`Los / ASP / Gewerk / Anlage`), nicht der Name: Die ASP-Kennung darf beliebig heißen und wird so übernommen, wie sie in der Erstellliste steht (seit 1.7.2; bis 1.7.1 musste der Ordnername „ASP" oder „ISP" enthalten).
 
 ---
 
@@ -368,6 +368,10 @@ OC_FCODE_DP;Funktionscode je Datenpunkt
 ```
 
 Einschränkung: Ein statischer Text darf selbst kein Semikolon enthalten, weil die Zeile dort abgeschnitten würde.
+
+**Anführungszeichen:** Nur statischer Text steht in Anführungszeichen. Speichert Calc oder Excel die Datei mit „alle Textzellen in Anführungszeichen", stehen auch die Attributnamen darin (`"ASP"`), und das Plugin übernimmt sie wörtlich: Der BAS lautet dann `…-ORTSKENNZEICHEN-GEWERK-…`. In der Tabellenkalkulation ist das nicht zu sehen, nur in einem Texteditor. Seit 1.7.2 steht der gelesene Aufbau im Protokoll.
+
+**Knopf „BAS konfigurieren"** (seit 1.7.3, im openCirt-Tab neben „BAS-Generierung einschliessen"): zeigt die Segmente als Tabelle mit Art (Text / Attribut) und Wert. Zeilen lassen sich als Attribut, Text oder Trennzeichen anfügen, entfernen und verschieben; die Vorschau zeigt den Aufbau mit `<NAME>` als Platzhalter für Attribute. „Speichern" schreibt die BAS.csv im richtigen Format und sichert die bisherige Datei als `BAS.csv.bak`. Oben im Dialog steht, welche Datei gelesen wurde; fehlt sie, wird sie mit dem üblichen Aufbau angelegt und das gemeldet. Wer die Datei lieber von Hand pflegt, kann das weiterhin tun.
 
 ### 7.2 Segment-Typen
 
