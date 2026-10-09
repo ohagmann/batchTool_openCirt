@@ -21,7 +21,6 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 - Beispielprojekt: Laden, Trennzeichen anfügen, nach oben, nach unten, entfernen, speichern ergibt die Datei im Format des Plugins mit unverändertem Aufbau; anschließender Gesamtlauf ohne Rückfrage, Ergebnis attributgleich mit 1.7.2 (17 Blätter, 9.092 Attribute).
 - Beschreibungen neben den Knöpfen im dunklen Thema per Bildschirmfoto geprüft: vorher kaum vom Hintergrund zu unterscheiden, jetzt lesbar.
 - Projekt ohne BAS.csv: Meldung „BAS.csv fehlte und wurde mit dem ueblichen Aufbau angelegt" mit Pfad, die Datei liegt danach mit dem üblichen Aufbau in `01- Referenzen`. Projekt mit BAS.csv: Statuszeile „BAS.csv gelesen, 13 Segmente" mit Pfad, alle Zeilen in der Tabelle, keine Meldung. Beides auch als Protokollzeile.
-- Windows-Build steht aus.
 
 ## [1.7.2] - 2026-10-07
 
@@ -38,7 +37,6 @@ Versionierung: Bump bei Änderungen am Plugin-Binary (C++/GUI). Kein Bump bei re
 - Beispielprojekt mit umbenanntem Ordner `01 MÜK01`, Gesamtlauf und IO-Liste: mit 1.7.1 alle 36 Zeilen „(ohne ASP)", BAS ohne ASP/Gewerk/Anlage, 2 Summenblätter; mit 1.7.2 alle Zeilen `MÜK01`, BAS vollständig, 4 Summenblätter. Gegen den Lauf mit `01 ASP01` ist das Ergebnis bis auf den Namen gleich (17 Blätter, 9.092 Attribute; nur die mittig gesetzte Überschrift des ASP-Deckblatts liegt wegen der anderen Textbreite anders).
 - Edeka BLV (138 Blätter, 115.387 Attribute), 1.7.1 gegen 1.7.2: gleich bis auf die drei Quellblätter und drei Deckblätter unter `00 Los 00/00 Übersicht/00 GA/00 482.00.01`, die jetzt ASP `Übersicht`, GEWERK `GA` und ANLAGE `482.00.01` tragen (Protokoll: „52 von 52" statt „49 von 52 Dateien erhalten ASP/GEWERK/ANLAGE aus Ordnerhierarchie").
 - BAS.csv-Rückfrage: mit der BAS.csv des Kollegen (alle Zeilen in Anführungszeichen) erscheint vor der Sicherheitsabfrage der Dialog „BAS.csv pruefen" mit den sechs betroffenen Zeilen; „Abbrechen" lässt den Zeichnungsordner unverändert (Prüfsummen gleich), „Trotzdem fortfahren" läuft wie bisher durch (BAS `DE-10789-ORTSKENNZEICHEN-GEWERK-ANLAGE-OC_AKS-OC_FCODE_DP-ASP`, Aufbau und Warnung im Protokoll). Beispielprojekt unverändert und mit Kürzel `"GEB1"`: kein Dialog, Protokollzeile „BAS.csv geladen: 13 Segmente, Aufbau: …", Ergebnis attributgleich mit dem Lauf ohne die Prüfung (17 Blätter, 9.092 Attribute).
-- Windows-Build steht aus.
 
 ## [1.7.1] - 2026-09-30
 
