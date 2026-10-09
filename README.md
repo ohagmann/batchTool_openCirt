@@ -1,5 +1,11 @@
 # batchTool / openCirt – BricsCAD Batch Processing & GA-Planungssoftware Plugin
 
+> **Hinweis (Oktober 2026): Dieses Repository ist archiviert, Stand 1.7.3.** Die Entwicklung geht in zwei getrennten Plugins weiter, beide ab Version 2.0.0:
+> - **[openCirt](https://github.com/ohagmann/openCirtPlugin)** – GA-Planungsautomatisierung (Befehl `OPENCIRT`, Kurzform `OC`)
+> - **[batchTool](https://github.com/ohagmann/batchToolPlugin)** – DWG-Stapelverarbeitung: Text, Attribute, Layer, LISP (Befehl `BATCHTOOL`, Kurzform `BT`)
+>
+> Beide lassen sich gleichzeitig laden. Der CHANGELOG bis 1.7.3 bleibt hier und im openCirt-Repository erhalten.
+
 Ein BRX-Plugin (C++/Qt6) für die automatisierte Massenverarbeitung von DWG-Dateien und zur Erstellung von Planungsunterlagen für die Gebäudeautomation (nach VDI3814) in BricsCAD V26 unter Windows und Linux. Statt Zeichnungen einzeln zu öffnen und manuell zu bearbeiten, können wiederkehrende Aufgaben über beliebig viele Dateien in einem Durchgang erledigt werden. Dazu können Texte, Attributwerte, Layer-Operationen und Lisp-Skripte genutzt werden. Im openCirt Tab können außerdem alle Aufgaben für die Erstellung von GA-Automationsschemata inkl. GA-FL erledigt werden. openCirt ist DIE freie GA-Planungssoftware für alle - kostenlos, hocheffizient und einfach zu bedienen.
 
 > ## ⚠️ Hinweis: Bildschirmflackern (Photosensitivität)
